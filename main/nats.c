@@ -20,6 +20,7 @@ static const char *TAG = "nats";
 // Implemented in tx_ring.zig.
 extern size_t tinyblok_tx_ring_used(void);
 extern size_t tinyblok_tx_ring_count(void);
+extern void tinyblok_tx_ring_reset_in_flight(void);
 
 static int sock = -1;
 
@@ -53,6 +54,9 @@ static void close_sock(int log_disconnect)
         close(sock);
         sock = -1;
         rx_len = 0;
+        // The head record may be partway through a send. The new connection
+        // hasn't seen those bytes, so restart the record from byte 0 on next drain.
+        tinyblok_tx_ring_reset_in_flight();
         if (log_disconnect)
             ESP_LOGW(TAG, "broker disconnected; will retry");
     }

@@ -1,6 +1,6 @@
 // Embedded patchbay runtime. No IDF deps, no allocator, no globals.
-// `publish!` enqueues into tx_ring and drains immediately; the per-tick drain
-// in zig_main is the fallback for bytes that hit EAGAIN.
+// `publish!` enqueues into tx_ring; rules.collect() drains once at the end of
+// each tick, after all dispatches have produced their emits.
 
 const tx_ring = @import("tx_ring.zig");
 
@@ -9,12 +9,16 @@ extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 
 extern fn tinyblok_nats_try_send(data: [*]const u8, data_len: usize) callconv(.c) isize;
 
+/// Push everything currently buffered. Called once per tick from rules.collect().
+pub fn flush() void {
+    tx_ring.drain(tinyblok_nats_try_send);
+}
+
 pub fn emit(subject: [*:0]const u8, payload: []const u8) void {
     // Subject is borrowed by pointer in the ring; caller's storage must outlive the drain.
     var n: usize = 0;
     while (subject[n] != 0) : (n += 1) {}
     _ = tx_ring.enqueue(subject[0..n], payload);
-    tx_ring.drain(tinyblok_nats_try_send);
 }
 
 pub fn emitFloat(subject: [*:0]const u8, value: f64, decimals: u8) void {

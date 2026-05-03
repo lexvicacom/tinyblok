@@ -461,6 +461,7 @@ class Emitter:
             out.append(f'    {guard}dispatchFmt("{p.subject}", "{fmt}", .{{{pre}}});\n')
         out.append(
             "    State_.counter = c +% 1;\n"
+            "    pb.flush();\n"
             "}\n"
         )
         return "".join(out)
