@@ -14,7 +14,6 @@
 extern void zig_main(void);
 
 extern int tinyblok_nats_connect(void);
-extern int tinyblok_nats_publish(const char *subject, const char *payload, size_t payload_len);
 
 static const char *TAG = "tinyblok";
 

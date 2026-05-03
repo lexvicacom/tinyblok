@@ -1,33 +1,24 @@
 // Embedded patchbay runtime. No IDF deps, no allocator, no globals.
-// Each stateful op is a struct with fixed-capacity state owned by the caller.
-// `publish!` is an indirection (Publisher fn pointer) so codegen-emitted rule
-// files can be retargeted: in firmware it points at tinyblok_nats_publish; in
-// host tests it can point at a buffer.
-//
-// Codegen target shape: walk `(on FILTER (-> X op1 op2 (publish! ...)))`,
-// emit a Zig function that threads X through `state.opN.update(x)`,
-// short-circuits on null, ends with `publisher(subject, payload, len)`.
+// `publish!` enqueues into tx_ring and drains immediately; the per-tick drain
+// in zig_main is the fallback for bytes that hit EAGAIN.
 
-// Float formatting goes through libc's snprintf rather than std.fmt — the latter
-// pulls in __udivti3 (128-bit divide) which compiler-rt for riscv32-freestanding
-// doesn't provide. snprintf is already linked by IDF.
+const tx_ring = @import("tx_ring.zig");
+
+// std.fmt pulls in __udivti3 which compiler-rt for riscv32-freestanding lacks.
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 
-pub const Publisher = *const fn (subject: [*:0]const u8, payload: [*]const u8, payload_len: usize) callconv(.c) c_int;
-
-// Set once at startup; rules call this for every `publish!`.
-pub var publisher: ?Publisher = null;
+extern fn tinyblok_nats_try_send(data: [*]const u8, data_len: usize) callconv(.c) isize;
 
 pub fn emit(subject: [*:0]const u8, payload: []const u8) void {
-    const p = publisher orelse return;
-    _ = p(subject, payload.ptr, payload.len);
+    // Subject is borrowed by pointer in the ring; caller's storage must outlive the drain.
+    var n: usize = 0;
+    while (subject[n] != 0) : (n += 1) {}
+    _ = tx_ring.enqueue(subject[0..n], payload);
+    tx_ring.drain(tinyblok_nats_try_send);
 }
 
-// Format a float and emit. Matches the `(publish! VALUE)` shape where VALUE
-// is a number that needs serializing back to text for the NATS wire.
 pub fn emitFloat(subject: [*:0]const u8, value: f64, decimals: u8) void {
     var buf: [32]u8 = undefined;
-    // %.*f: precision from arg list. Zig variadic call needs concrete c_int.
     const prec: c_int = @intCast(decimals);
     const n = snprintf(&buf, buf.len, "%.*f", prec, value);
     if (n <= 0) return;
@@ -43,13 +34,6 @@ pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     emit(subject, buf[0..len]);
 }
 
-// --- stateful ops -----------------------------------------------------------
-//
-// Each op is a struct with .update(x) returning ?T. null = suppress, T = pass.
-// Convention matches monoblok: gates pass the value through on success, return
-// null on suppress. `publish!` is a no-op on null (caller checks).
-
-/// Pass value through if |v - last_emitted| >= threshold. First sight always emits.
 pub const Deadband = struct {
     threshold: f64,
     last: f64 = 0,
@@ -161,8 +145,9 @@ pub const Throttle = struct {
 
 // --- subject helpers --------------------------------------------------------
 
-/// Append ".suffix" to base into a fixed buffer, NUL-terminate. Returns pointer
-/// suitable for the C Publisher signature. Buffer must outlive the emit call.
+/// Append ".suffix" to base into a fixed buffer, NUL-terminate.
+/// Caveat: the returned pointer is only safe with `emit` if `buf` outlives the
+/// next tx_ring.drain — synthesized subjects must come from longer-lived storage.
 pub fn subjectAppend(buf: []u8, base: []const u8, suffix: []const u8) ?[*:0]const u8 {
     if (base.len + 1 + suffix.len + 1 > buf.len) return null;
     @memcpy(buf[0..base.len], base);

@@ -9,6 +9,7 @@ set(ZIG_DEPS
     ${CMAKE_CURRENT_SOURCE_DIR}/main.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/patchbay.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/rules.zig
+    ${CMAKE_CURRENT_SOURCE_DIR}/tx_ring.zig
 )
 set(ZIG_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/zig-out)
 set(ZIG_LIB ${ZIG_OUT_DIR}/libtinyblok.a)
