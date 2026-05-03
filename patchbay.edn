@@ -1,0 +1,65 @@
+;; tinyblok.* — C6 board test
+
+;; each (pump ...) generates an extern fn decl and a call site in
+;; collect().
+
+(pump "tinyblok.heap"   :from tinyblok_free_heap    :type u32      :hz 10)
+(pump "tinyblok.rssi"   :from tinyblok_wifi_rssi    :type i32      :hz 10)
+(pump "tinyblok.uptime" :from tinyblok_uptime_us    :type uptime-s :hz 10)
+(pump "tinyblok.temp"   :from tinyblok_read_temp_c  :type f32      :hz 1)
+
+;; --- heap: dedupe + 1 s rolling avg, alert on low ---
+(on "tinyblok.heap"
+  (-> payload-float
+      (deadband 1024)                                 ; ignore <1 KiB jitter
+      (publish! (subject-append "stable")))) 
+
+(on "tinyblok.heap"
+  (-> payload-float
+      (moving-avg 10)                               
+      (round 0)
+      (publish! (subject-append "avg1s"))))
+
+(on "tinyblok.heap"
+  (when (< payload-float 20480)                       ; <20 KiB free
+    (-> payload (rising-edge) (publish! "tinyblok.alert.heap.low"))))
+
+;; --- rssi: drop "not associated" zeros, dedupe, alert on weak link ---
+(on "tinyblok.rssi"
+  (when (not (= payload-float 0))                     ; 0 = no info
+    (-> payload-float
+        (deadband 2)                                  ; +/-2 dBm jitter floor
+        (publish! (subject-append "stable")))))       ; -> tinyblok.rssi.stable
+
+(on "tinyblok.rssi"
+  (when (not (= payload-float 0))
+    (-> payload-float (moving-avg :ms 5000)
+        (round 0)
+        (publish! (subject-append "avg5s")))))
+
+(on "tinyblok.rssi"
+  (when (and (not (= payload-float 0)) (< payload-float -75))
+    (-> payload (rising-edge) (publish! "tinyblok.alert.rssi.weak"))))
+
+;; Throttle uptime to once per minute for dashboards (10 Hz is silly here).
+(on "tinyblok.uptime"
+  (-> payload-float
+      (throttle :ms 60000)
+      (round 0)
+      (publish! (subject-append "1m"))))
+
+;; --- temp: 1 Hz already, just window it and alert on hot ---
+(on "tinyblok.temp"
+  (-> payload-float
+      (moving-avg 30) ; 30s
+      (round 1)
+      (publish! (subject-append "avg30s"))))
+
+
+(on "tinyblok.temp"
+  (when (> payload-float 30)
+    (-> payload (rising-edge) (publish! "tinyblok.alert.temp.hot"))))
+
+(on "alex"
+  (when (= payload 42) 
+    (-> 1 (publish! "alex.alert"))))

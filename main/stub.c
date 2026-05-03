@@ -3,6 +3,8 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -11,34 +13,38 @@
 
 extern void zig_main(void);
 
+extern int tinyblok_nats_connect(void);
+extern int tinyblok_nats_publish(const char *subject, const char *payload, size_t payload_len);
+
 static const char *TAG = "tinyblok";
 
 static temperature_sensor_handle_t tsens;
 
-// Event group bit set once we have an IP. Used to block app_main until the
-// radio is up before handing control to Zig.
 static EventGroupHandle_t wifi_events;
 #define WIFI_GOT_IP_BIT BIT0
 
-static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
+    {
         esp_wifi_connect();
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        // Canonical reconnect-forever loop. AP loss, roam, brief power blip on
-        // the AP — all land here. Without this one disconnect bricks the link
-        // until reset. No backoff: IDF's own example doesn't bother either,
-        // and the radio rate-limits internally.
+    }
+    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+    {
         ESP_LOGW(TAG, "wifi disconnected, reconnecting");
         xEventGroupClearBits(wifi_events, WIFI_GOT_IP_BIT);
         esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    }
+    else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+    {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(wifi_events, WIFI_GOT_IP_BIT);
     }
 }
 
-static void wifi_connect_blocking(void) {
+static void wifi_connect_blocking(void)
+{
     wifi_events = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -63,18 +69,26 @@ static void wifi_connect_blocking(void) {
     xEventGroupWaitBits(wifi_events, WIFI_GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 }
 
-void app_main(void) {
-    // NVS is required by esp_wifi for calibration data, even when creds come
-    // from menuconfig and not from the NVS "wifi" namespace.
+void app_main(void)
+{
+    // NVS required by esp_wifi for calibration data even when creds come from menuconfig.
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
-    } else {
+    }
+    else
+    {
         ESP_ERROR_CHECK(err);
     }
 
     wifi_connect_blocking();
+
+    if (tinyblok_nats_connect() != 0)
+    {
+        ESP_LOGE(TAG, "nats connect failed; continuing without broker");
+    }
 
     temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     temperature_sensor_install(&cfg, &tsens);
@@ -82,8 +96,28 @@ void app_main(void) {
     zig_main();
 }
 
-float tinyblok_read_temp_c(void) {
+float tinyblok_read_temp_c(void)
+{
     float c = 0.0f;
     temperature_sensor_get_celsius(tsens, &c);
     return c;
+}
+
+uint32_t tinyblok_free_heap(void)
+{
+    return esp_get_free_heap_size();
+}
+
+uint64_t tinyblok_uptime_us(void)
+{
+    return (uint64_t)esp_timer_get_time();
+}
+
+// Returns RSSI in dBm, or 0 if not associated (also returned mid-(re)connect).
+int tinyblok_wifi_rssi(void)
+{
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK)
+        return 0;
+    return ap.rssi;
 }

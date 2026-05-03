@@ -2,9 +2,12 @@ IDF_EXPORT := /Users/alex/esp-idf-v6.0.1/export.sh
 PORT       := /dev/cu.usbmodem101
 IDF        := . $(IDF_EXPORT) >/dev/null && idf.py
 
-.PHONY: build flash monitor flash-monitor clean fullclean menuconfig
+.PHONY: gen build flash monitor flash-monitor clean fullclean menuconfig
 
-build:
+gen:
+	@python3 tools/gen.py patchbay.edn main/rules.zig
+
+build: gen
 	@$(IDF) build
 
 flash: build
