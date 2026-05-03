@@ -164,4 +164,5 @@ pub fn collect() void {
     dispatchFmt("tinyblok.uptime", "%.3f", .{@as(f64, @floatFromInt(tinyblok_uptime_us())) / 1_000_000.0});
     if (c % 10 == 0) dispatchFmt("tinyblok.temp", "%.7f", .{@as(f64, tinyblok_read_temp_c())});
     State_.counter = c +% 1;
+    pb.flush();
 }

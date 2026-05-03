@@ -5,12 +5,12 @@
 //
 // We store records, not framed bytes. Each record is:
 //
-//   [u16 subject_len][u16 payload_len][usize subject_ptr][payload_len bytes payload]
+//   [u16 subject_len][u16 payload_len][subject_len bytes][payload_len bytes]
 //
 // The PUB header ("PUB <subject> <payload_len>\r\n") and trailing "\r\n" are
-// built on the stack at drain time. The subject is borrowed by pointer; caller
-// (pb.emit) promises the bytes outlive the drain. Holds for `pb.emit("literal",
-// ...)` since literals live in .rodata for the program lifetime.
+// built on the stack at drain time. Subject bytes are copied into the ring at
+// enqueue time so callers don't have to manage subject lifetime — the ring is
+// fully self-contained.
 //
 // Drop-oldest on full: if a record won't fit, evict records starting from the
 // tail until it does. Right policy for live telemetry — broker comes back to a
@@ -29,7 +29,7 @@ pub const RING_CAP: usize = 8192;
 pub const SUBJ_MAX: usize = 64;
 pub const PAYLOAD_MAX: usize = 64;
 
-const HEADER_BYTES: usize = @sizeOf(u16) + @sizeOf(u16) + @sizeOf(usize);
+const HEADER_BYTES: usize = @sizeOf(u16) + @sizeOf(u16);
 
 var buf: [RING_CAP]u8 = undefined;
 var head: usize = 0;
@@ -59,6 +59,13 @@ export fn tinyblok_tx_ring_count() callconv(.c) usize {
     return count();
 }
 
+/// Caller (the NATS layer) invokes this after a socket teardown so the next
+/// drain restarts the head record from byte 0 instead of resuming mid-record
+/// into a fresh connection (which the broker would parse as garbage).
+export fn tinyblok_tx_ring_reset_in_flight() callconv(.c) void {
+    record_bytes_sent = 0;
+}
+
 /// Number of records currently buffered. Walks the ring; cheap (cap is 8 KiB).
 pub fn count() usize {
     if (used_bytes == 0) return 0;
@@ -69,8 +76,9 @@ pub fn count() usize {
         if (slack_at_end > 0 and t == RING_CAP - slack_at_end) {
             t = 0;
         }
+        const subj_len = readU16(t);
         const pl_len = readU16(t + 2);
-        const rec_size = HEADER_BYTES + pl_len;
+        const rec_size = HEADER_BYTES + subj_len + pl_len;
         t += rec_size;
         if (t >= RING_CAP) t -= RING_CAP;
         remaining -= rec_size;
@@ -104,7 +112,7 @@ pub fn enqueue(subject: []const u8, payload: []const u8) bool {
         return false;
     }
 
-    const need = HEADER_BYTES + payload.len;
+    const need = HEADER_BYTES + subject.len + payload.len;
     if (need > RING_CAP) {
         dropped += 1;
         return false;
@@ -185,8 +193,9 @@ fn evictOne() bool {
     // The tail record is the head of the FIFO; if it's mid-send, it's pinned.
     if (record_bytes_sent > 0) return false;
 
+    const subj_len = readU16(tail);
     const pl_len = readU16(tail + 2);
-    const rec_size = HEADER_BYTES + pl_len;
+    const rec_size = HEADER_BYTES + subj_len + pl_len;
     tail += rec_size;
     used_bytes -= rec_size;
     if (tail == RING_CAP - slack_at_end and slack_at_end > 0) {
@@ -205,8 +214,10 @@ fn writeRecord(off: usize, subject: []const u8, payload: []const u8) void {
     p += 2;
     writeU16(p, @intCast(payload.len));
     p += 2;
-    writeUsize(p, @intFromPtr(subject.ptr));
-    p += @sizeOf(usize);
+    if (subject.len > 0) {
+        @memcpy(buf[p..][0..subject.len], subject);
+        p += subject.len;
+    }
     if (payload.len > 0) {
         @memcpy(buf[p..][0..payload.len], payload);
     }
@@ -219,25 +230,6 @@ inline fn writeU16(off: usize, v: u16) void {
 
 inline fn readU16(off: usize) u16 {
     return @as(u16, buf[off]) | (@as(u16, buf[off + 1]) << 8);
-}
-
-inline fn writeUsize(off: usize, v: usize) void {
-    var i: usize = 0;
-    var x = v;
-    while (i < @sizeOf(usize)) : (i += 1) {
-        buf[off + i] = @intCast(x & 0xff);
-        x >>= 8;
-    }
-}
-
-inline fn readUsize(off: usize) usize {
-    var v: usize = 0;
-    var i: usize = @sizeOf(usize);
-    while (i > 0) {
-        i -= 1;
-        v = (v << 8) | buf[off + i];
-    }
-    return v;
 }
 
 pub const TrySendFn = *const fn (data: [*]const u8, data_len: usize) callconv(.c) isize;
@@ -254,15 +246,16 @@ pub fn drain(try_send: TrySendFn) void {
 
         const subj_len = readU16(tail);
         const pl_len = readU16(tail + 2);
-        const subj_ptr = readUsize(tail + 4);
-        const subject_p: [*]const u8 = @ptrFromInt(subj_ptr);
-        const payload_off = tail + HEADER_BYTES;
+        const subj_off = tail + HEADER_BYTES;
+        const subject = buf[subj_off..][0..subj_len];
+        const payload_off = subj_off + subj_len;
         const payload = buf[payload_off..][0..pl_len];
+        const rec_size = HEADER_BYTES + subj_len + pl_len;
 
         var hdr: [SUBJ_MAX + 32]u8 = undefined;
-        const hdr_n = snprintf(&hdr, hdr.len, "PUB %.*s %u\r\n", @as(c_int, @intCast(subj_len)), subject_p, @as(c_uint, @intCast(pl_len)));
+        const hdr_n = snprintf(&hdr, hdr.len, "PUB %.*s %u\r\n", @as(c_int, @intCast(subj_len)), subject.ptr, @as(c_uint, @intCast(pl_len)));
         if (hdr_n <= 0) {
-            advance(HEADER_BYTES + pl_len);
+            advance(rec_size);
             record_bytes_sent = 0;
             continue;
         }
@@ -278,7 +271,7 @@ pub fn drain(try_send: TrySendFn) void {
             return;
         }
 
-        advance(HEADER_BYTES + pl_len);
+        advance(rec_size);
         record_bytes_sent = 0;
     }
 }
