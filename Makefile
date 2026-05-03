@@ -11,9 +11,11 @@ flash: build
 	@$(IDF) -p $(PORT) flash
 
 monitor:
+	@echo "(exit with Ctrl+])"
 	@$(IDF) -p $(PORT) monitor
 
 flash-monitor: build
+	@echo "(exit with Ctrl+])"
 	@$(IDF) -p $(PORT) flash monitor
 
 clean:
