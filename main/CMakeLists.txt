@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "stub.c"
     INCLUDE_DIRS "."
-    PRIV_REQUIRES esp_timer
+    PRIV_REQUIRES esp_timer esp_driver_tsens esp_wifi esp_event esp_netif nvs_flash
 )
 
 set(ZIG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.zig)

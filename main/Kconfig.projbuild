@@ -1,0 +1,15 @@
+menu "tinyblok"
+
+    config TINYBLOK_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "myssid"
+        help
+            SSID for the Wi-Fi network the device joins on boot.
+
+    config TINYBLOK_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Passphrase for the Wi-Fi network. Leave empty for an open AP.
+
+endmenu

@@ -1,0 +1,10 @@
+# Pinned across checkouts. Per-device values (Wi-Fi creds, anything secret)
+# stay out of here — set via `idf.py menuconfig`, which writes to the
+# gitignored `sdkconfig` file.
+CONFIG_IDF_TARGET="esp32c6"
+
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+CONFIG_PARTITION_TABLE_SINGLE_APP=y

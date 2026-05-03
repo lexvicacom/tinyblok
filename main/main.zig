@@ -3,15 +3,18 @@
 
 extern fn printf(fmt: [*:0]const u8, ...) c_int;
 extern fn vTaskDelay(ticks: u32) void;
+extern fn tinyblok_read_temp_c() f32;
 
-// Default IDF tick rate is 100 Hz; 1000 ms = 100 ticks. Revisit if CONFIG_FREERTOS_HZ changes.
-const ticks_per_second: u32 = 100;
+// C6 internal temp sensor quantizes to 1 °C, so polling faster than 1 Hz just
+// gives duplicates. Default IDF tick rate is 100 Hz (10 ms/tick) → 100 ticks = 1 s.
+const ticks_per_sample: u32 = 100;
 
 export fn zig_main() callconv(.c) void {
     var counter: u32 = 0;
     while (true) {
-        _ = printf("hello from zig: tick=%lu\n", counter);
+        const temp_c: f64 = tinyblok_read_temp_c();
+        _ = printf("hello from zig: tick=%lu temp=%.7fC\n", counter, temp_c);
         counter +%= 1;
-        vTaskDelay(ticks_per_second);
+        vTaskDelay(ticks_per_sample);
     }
 }
