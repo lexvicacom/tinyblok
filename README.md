@@ -4,17 +4,17 @@ ESP-IDF project that links a Zig static library, as groundwork for one day linki
 
 Status:
 - Connects to wifi (run make menuconfig)
-- Connects to a NATS broker over TCP (host/port also in menuconfig under "tinyblok") and sends `CONNECT`. No SUB, no reconnect, no PING/PONG yet
+- Connects to a NATS broker over TCP (host/port also in menuconfig under "tinyblok") and sends `CONNECT` and `PUB`. 
 - Run make build flash and then make monitor if you want to connect and run
 - prints current temperature annoyingly already quantized to 1s
 
 ## Why codegen
 
-A small Python tool compiles the patchbay s-expression file into Zig ahead of build. Monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that's too much code and too much RAM, so on-device the rules become straight-line Zig with statically-allocated state slots. It's the same DSL implemented differently here; we now have two implementations though, so need to see if we can share possibly. That said, the forms are all quite simple.
+A small Python tool compiles the patchbay s-expression file into Zig ahead of build. Monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that's too much code and too much RAM, so on-device the rules become straight-line Zig with statically-allocated state slots. It's the same DSL implemented differently here; we now have two implementations though, so need to see if we can unify. That said, the forms are all quite simple.
 
 ## TX ring
 
-A ring buffer sits between rule eval and the NATS socket. `publish!` enqueues a record (subject borrowed by pointer, payload inline); the loop drains it via non-blocking `send()` once per tick. A slow broker or Wi-Fi retransmit burst drops the oldest queued samples rather than stalling the rule loop, so when the broker comes back it gets a catch-up burst of recent data instead of stale history. Default capacity is 8 KB ≈ 256 messages at typical payload sizes; configurable.
+A ring buffer sits between rule eval and the NATS socket. `publish!` enqueues a record (subject borrowed by pointer with payload inline); the loop drains it via non-blocking `send()` once per tick. A slow broker or Wi-Fi retransmit burst drops the oldest queued samples rather than stalling the rule loop, so when the broker comes back it gets a catch-up burst of recent data instead of stale history. Default capacity is 8 KB ≈ 256 messages at typical payload sizes; this is configurable.
 
 A lot of the time old messages have no value and can just be dropped, which is what the ring already does. In contexts where signal is spotty and old messages have value in spite of their age, such as a remote sensor where every reading matters and the link is flaky for hours at a time, a future option is to spool overflow records to LittleFS on flash so a long outage can be flushed when the broker returns.
 
