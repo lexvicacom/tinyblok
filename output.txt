@@ -1,0 +1,128 @@
+--- esp-idf-monitor 1.9.0 on /dev/cu.usbmodem101 115200
+--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+ESP-ROM:esp32c6-20220919
+Build:Sep 19 2022
+rst:0x15 (USB_UART_HPSYS),boot:0xc (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40806860
+--- 0x40806860: rv_utils_wait_for_intr at /Users/alex/esp-idf-v6.0.1/components/riscv/include/riscv/rv_utils.h:80
+--- (inlined by) esp_cpu_wait_for_intr at /Users/alex/esp-idf-v6.0.1/components/esp_hw_support/cpu.c:62
+SPIWP:0xee
+mode:DIO, clock div:2
+load:0x40875730,len:0x16f0
+load:0x4086b910,len:0xedc
+--- 0x4086b910: esp_bootloader_get_description at /Users/alex/esp-idf-v6.0.1/components/esp_bootloader_format/esp_bootloader_desc.c:40
+load:0x4086e610,len:0x31f4
+--- 0x4086e610: is_xmc_chip_strict at /Users/alex/esp-idf-v6.0.1/components/bootloader_support/bootloader_flash/src/bootloader_flash.c:925
+entry 0x4086b91a
+--- 0x4086b91a: call_start_cpu0 at /Users/alex/esp-idf-v6.0.1/components/bootloader/subproject/main/bootloader_start.c:27
+I (23) boot: ESP-IDF v6.0.1-dirty 2nd stage bootloader
+I (23) boot: compile time May  3 2026 12:30:52
+I (24) boot: chip revision: v0.2
+I (24) boot: efuse block revision: v0.3
+I (27) boot.esp32c6: SPI Speed      : 80MHz
+I (31) boot.esp32c6: SPI Mode       : DIO
+I (34) boot.esp32c6: SPI Flash Size : 4MB
+I (38) boot: Enabling RNG early entropy source...
+I (43) boot: Partition Table:
+I (45) boot: ## Label            Usage          Type ST Offset   Length
+I (52) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (65) boot:  2 factory          factory app      00 00 00010000 00100000
+I (71) boot: End of partition table
+I (75) esp_image: segment 0: paddr=00010020 vaddr=420b0020 size=1f2c0h (127680) map
+I (106) esp_image: segment 1: paddr=0002f2e8 vaddr=40800000 size=00d30h (  3376) load
+I (108) esp_image: segment 2: paddr=00030020 vaddr=42000020 size=a5778h (677752) map
+I (239) esp_image: segment 3: paddr=000d57a0 vaddr=40800d30 size=1b2ach (111276) load
+I (270) boot: Loaded app from partition at offset 0x10000
+I (270) boot: Disabling RNG early entropy source...
+I (280) cpu_start: Unicore app
+I (288) cpu_start: GPIO 17 and 16 are used as console UART I/O pins
+I (289) cpu_start: Pro cpu start user code
+I (289) cpu_start: cpu freq: 160000000 Hz
+I (291) app_init: Application information:
+I (295) app_init: Project name:     tinyblok
+I (299) app_init: App version:      6d886d3
+I (302) app_init: Compile time:     May  3 2026 16:17:13
+I (308) app_init: ELF file SHA256:  2eec9958d...
+I (312) app_init: ESP-IDF:          v6.0.1-dirty
+I (316) efuse_init: Min chip rev:     v0.0
+I (320) efuse_init: Max chip rev:     v0.99 
+I (324) efuse_init: Chip rev:         v0.2
+I (328) heap_init: Initializing. RAM available for dynamic allocation:
+I (334) heap_init: At 40821B30 len 0005AAE0 (362 KiB): RAM
+I (339) heap_init: At 4087C610 len 00002F54 (11 KiB): RAM
+I (344) heap_init: At 50000000 len 00003FE8 (15 KiB): RTCRAM
+I (351) spi_flash: detected chip: generic
+I (354) spi_flash: flash io: dio
+W (356) spi_flash: Detected size(8192k) larger than the size in the binary image header(4096k). Using the size in the binary image header.
+I (369) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (375) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (390) main_task: Started on CPU0
+I (390) main_task: Calling app_main()
+I (400) pp: pp rom version: 5b8dcfa
+I (400) net80211: net80211 rom version: 5b8dcfa
+I (420) wifi:wifi driver task: 40827f18, prio:23, stack:6656, core=0
+I (420) wifi:wifi firmware version: b37c951
+I (420) wifi:wifi certification version: v7.0
+I (420) wifi:config NVS flash: enabled
+I (420) wifi:config nano formatting: disabled
+I (430) wifi:mac_version:HAL_MAC_ESP32AX_761,ut_version:N, band mode:0x1
+I (430) wifi:Init data frame dynamic rx buffer num: 32
+I (440) wifi:Init static rx mgmt buffer num: 5
+I (440) wifi:Init management short buffer num: 32
+I (450) wifi:Init dynamic tx buffer num: 32
+I (450) wifi:Init static tx FG buffer num: 2
+I (460) wifi:Init static rx buffer size: 1700 (rxctrl:92, csi:512)
+I (460) wifi:Init static rx buffer num: 10
+I (460) wifi:Init dynamic rx buffer num: 32
+I (470) wifi_init: rx ba win: 6
+I (470) wifi_init: accept mbox: 6
+I (470) wifi_init: tcpip mbox: 32
+I (480) wifi_init: udp mbox: 6
+I (480) wifi_init: tcp mbox: 6
+I (480) wifi_init: tcp tx win: 5760
+I (490) wifi_init: tcp rx win: 5760
+I (490) wifi_init: tcp mss: 1440
+I (490) wifi_init: WiFi IRAM OP enabled
+I (500) wifi_init: WiFi RX IRAM OP enabled
+I (500) wifi_init: WiFi SLP IRAM OP enabled
+W (500) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
+I (510) phy_init: phy_version 343,b513b46,Nov 14 2025,16:34:12
+I (590) wifi:11ax coex: WDEVAX_PTI0(0x55777555), WDEVAX_PTI1(0x00003377).
+I (590) wifi:mode : sta (ac:eb:e6:1e:52:00)
+I (590) wifi:enable tsf
+I (590) tinyblok: connecting to ssid 'BEATRIX'
+I (610) wifi:new:<11,0>, old:<1,0>, ap:<255,255>, sta:<11,0>, prof:1, snd_ch_cfg:0x0
+I (610) wifi:(connect)dot11_authmode:0x3, pairwise_cipher:0x3, group_cipher:0x3
+I (610) wifi:state: init -> auth (0xb0)
+I (620) wifi:state: auth -> assoc (0x0)
+I (630) wifi:(assoc)RESP, Extended Capabilities length:8, operating_mode_notification:0
+I (630) wifi:(assoc)RESP, Extended Capabilities, MBSSID:0, TWT Responder:0, OBSS Narrow Bandwidth RU In OFDMA Tolerance:0
+I (640) wifi:Extended Capabilities length:8, operating_mode_notification:1
+I (640) wifi:BSS max idle period:292(1000TU), protected keep alive:FALSE
+I (650) wifi:state: assoc -> run (0x10)
+I (650) wifi:(trc)phytype:CBW20-SGI, snr:52, maxRate:144, highestRateIdx:0
+W (660) wifi:(trc)band:2G, phymode:3, highestRateIdx:0, lowestRateIdx:11, dataSchedTableSize:14
+I (670) wifi:(trc)band:2G, rate(S-MCS7, rateIdx:0), ampdu(rate:S-MCS7, schedIdx(0, stop:8)), snr:52, ampduState:wait operational
+I (680) wifi:ifidx:0, rssi:-46, nf:-98, phytype(0x3, CBW20-SGI), phymode(0x3, 11bgn), max_rate:144, he:0, vht:0, ht:1
+I (690) wifi:(ht)max.RxAMPDULenExponent:3(65535 bytes), MMSS:6(8 us)
+I (700) wifi:connected with BEATRIX, aid = 2, channel 11, BW20, bssid = 00:ab:48:60:45:c5
+I (700) wifi:security: WPA2-PSK, phy: bgn, rssi: -46, cipher(pairwise:0x3, group:0x3), pmf:0
+I (710) wifi:pm start, type: 1, twt_start:0
+I (720) wifi:pm start, type:1, aid:0x2, trans-BSSID:00:ab:48:60:45:c5, BSSID[5]:0xc5, mbssid(max-indicator:0, index:0), he:0
+I (730) wifi:dp: 1, bi: 102400, li: 3, scale listen interval from 307200 us to 307200 us
+I (730) wifi:set rx beacon pti, rx_bcn_pti: 10, bcn_timeout: 25000, mt_pti: 10, mt_time: 10000
+I (740) wifi:[ADDBA]TX addba request, tid:0, dialogtoken:1, bufsize:64, A-MSDU:0(not supported), policy:1(IMR), ssn:0(0x0)
+I (750) wifi:[ADDBA]TX addba request, tid:7, dialogtoken:2, bufsize:64, A-MSDU:0(not supported), policy:1(IMR), ssn:0(0x20)
+I (760) wifi:[ADDBA]TX addba request, tid:5, dialogtoken:3, bufsize:64, A-MSDU:0(not supported), policy:1(IMR), ssn:0(0x0)
+I (780) wifi:dp: 2, bi: 102400, li: 4, scale listen interval from 307200 us to 409600 us
+I (780) wifi:AP's beacon interval = 102400 us, DTIM period = 2
+I (790) wifi:[ADDBA]RX addba response, status:0, tid:0/tb:1(0xa1), bufsize:64, batimeout:0, txa_wnd:64
+I (800) wifi:[ADDBA]RX addba response, status:0, tid:7/tb:1(0xa1), bufsize:64, batimeout:0, txa_wnd:64
+I (810) wifi:[ADDBA]RX addba response, status:0, tid:5/tb:1(0xa1), bufsize:64, batimeout:0, txa_wnd:64
+W (820) wifi:<ba-add>idx:0, ifx:0, tid:0, TAHI:0x100c545, TALO:0x6048ab00, (ssn:0, win:64, cur_ssn:0), CONF:0xc0000005
+I (1840) esp_netif_handlers: sta ip: 192.168.4.31, mask: 255.255.252.0, gw: 192.168.4.1
+I (1840) tinyblok: got ip: 192.168.4.31
+I (2060) nats: connected 192.168.5.2:4222
+I (2060) nats: <- INFO {"server_id":"NBKW5R6SFA74YWR3753SC4ICOYMMUBTH2IDK2Q7YB4IFFAXIQVD2FML5","server_name":"NBKW5R6SFA74YWR3753SC4ICOYMMUBTH2IDK2Q7YB4IFFAXIQVD2FML5","version":"2.12.7","proto":1,"go":"go1.26.2","host":"0.0.0.0","port":4222,"headers":true,"max_payload":1048576,"client_id":9,"client_ip":"192.168.4.31","api_lvl":3,"xkey":"XCYJEAKWWDHTVL4NMBZJJQ2LYA3DYDCAYMXU3KCYADKPXZAS2XQS2RUV"} 
+I (2090) temperature_sensor: Range [-10°C ~ 80°C], error < 1°C
