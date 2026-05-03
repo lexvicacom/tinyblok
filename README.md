@@ -6,7 +6,10 @@ Status:
 - Connects to wifi (run make menuconfig)
 - Connects to a NATS broker over TCP (host/port also in menuconfig under "tinyblok") and sends `CONNECT` and `PUB`. 
 - Run make build flash and then make monitor if you want to connect and run
-- prints current temperature annoyingly already quantized to 1s
+- emits to a handful of `tinyblock.>` subjects
+
+<img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
+
 
 ## Why codegen
 
