@@ -428,17 +428,8 @@ class Emitter:
         return "".join(out)
 
     def _render_collect(self) -> str:
-        tick_hz = max(p.hz for p in self.pumps)
-        for p in self.pumps:
-            if tick_hz % p.hz != 0:
-                raise SyntaxError(
-                    f"pump {p.subject!r}: :hz {p.hz} does not divide tick rate {tick_hz}"
-                )
         out: list[str] = []
         out.append(
-            "\n"
-            f"pub const tick_hz: u32 = {tick_hz};\n"
-            f"pub const tick_ms: u32 = {1000 // tick_hz};\n"
             "\n"
             "fn dispatchFmt(subject: []const u8, comptime fmt: [*:0]const u8, args: anytype) void {\n"
             "    var buf: [32]u8 = undefined;\n"
@@ -448,22 +439,35 @@ class Emitter:
             "    dispatch(subject, buf[0..len]);\n"
             "}\n"
             "\n"
-            "pub fn collect() void {\n"
-            "    const State_ = struct { var counter: u32 = 0; };\n"
-            "    const c = State_.counter;\n"
         )
+        # One exported per-pump function the C driver layer invokes from the
+        # esp_event handler. Each pump owns its own esp_timer/event_id; the
+        # tx_ring is drained separately by the main loop, so no flush here.
         for p in self.pumps:
-            every = tick_hz // p.hz
             entry = _TYPE_TABLE[p.type_]
             pre = entry["pre"].replace("{x}", f"{p.from_sym}()")
             fmt = entry["fmt"]
-            guard = "" if every == 1 else f"if (c % {every} == 0) "
-            out.append(f'    {guard}dispatchFmt("{p.subject}", "{fmt}", .{{{pre}}});\n')
-        out.append(
-            "    State_.counter = c +% 1;\n"
-            "    pb.flush();\n"
-            "}\n"
-        )
+            fn = _pump_fn_name(p.subject)
+            out.append(
+                f"export fn {fn}() callconv(.c) void {{\n"
+                f'    dispatchFmt("{p.subject}", "{fmt}", .{{{pre}}});\n'
+                f"}}\n\n"
+            )
+        # Pump table consumed by drivers.c. Period in microseconds (esp_timer's unit).
+        out.append("pub const Pump = extern struct {\n")
+        out.append("    subject: [*:0]const u8,\n")
+        out.append("    period_us: u64,\n")
+        out.append("    fire: *const fn () callconv(.c) void,\n")
+        out.append("};\n\n")
+        out.append(f"export const tinyblok_pump_count: usize = {len(self.pumps)};\n")
+        out.append(f"export const tinyblok_pumps: [{len(self.pumps)}]Pump = .{{\n")
+        for p in self.pumps:
+            period_us = 1_000_000 // p.hz
+            fn = _pump_fn_name(p.subject)
+            out.append(
+                f'    .{{ .subject = "{p.subject}", .period_us = {period_us}, .fire = &{fn} }},\n'
+            )
+        out.append("};\n")
         return "".join(out)
 
 
@@ -521,6 +525,15 @@ def _zig_num(x: float) -> str:
     if x == int(x):
         return str(int(x))
     return repr(x)
+
+
+def _pump_fn_name(subject: str) -> str:
+    prefix = "tinyblok."
+    tail = subject[len(prefix):] if subject.startswith(prefix) else subject
+    out = ["tinyblok_pump_"]
+    for c in tail:
+        out.append("_" if c in ".-" else c)
+    return "".join(out)
 
 
 def _filter_to_fn_name(filt: str) -> str:

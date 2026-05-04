@@ -1,8 +1,8 @@
-// Embedded patchbay runtime. No IDF deps, no allocator, no globals.
+// Embedded patchbay runtime
 // `publish!` enqueues into tx_ring; rules.collect() drains once at the end of
 // each tick, after all dispatches have produced their emits.
 //
-// Op state machines (Squelch, Deadband, MovingAvg, edges) live in `kernel.zig`,
+// Op state machines (Squelch, Deadband, MovingAvg, edges) live in the kernel
 // vendored from monoblok. Throttle stays local because it speaks microseconds
 // against `tinyblok_uptime_us()` while monoblok's hold-off is millisecond-based.
 
@@ -51,11 +51,6 @@ pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     emit(subject, buf[0..len]);
 }
 
-/// Pass at most one sample per `interval_us` microseconds. First sight always passes.
-/// Caller supplies `now_us` (so the runtime stays clock-source-agnostic).
-///
-/// Local because tinyblok's clock source is microseconds (`tinyblok_uptime_us()`).
-/// kernel.HoldOff is the millisecond sibling for the host evaluator.
 pub const Throttle = struct {
     interval_us: u64,
     last_us: u64 = 0,
@@ -71,11 +66,6 @@ pub const Throttle = struct {
     }
 };
 
-// --- subject helpers --------------------------------------------------------
-
-/// Append ".suffix" to base into a fixed buffer, NUL-terminate.
-/// Caveat: the returned pointer is only safe with `emit` if `buf` outlives the
-/// next tx_ring.drain — synthesized subjects must come from longer-lived storage.
 pub fn subjectAppend(buf: []u8, base: []const u8, suffix: []const u8) ?[*:0]const u8 {
     if (base.len + 1 + suffix.len + 1 > buf.len) return null;
     @memcpy(buf[0..base.len], base);

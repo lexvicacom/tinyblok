@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "stub.c" "nats.c"
+    SRCS "stub.c" "nats.c" "drivers.c" "sources.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_wifi esp_event esp_netif nvs_flash lwip
 )

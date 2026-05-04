@@ -1,29 +1,4 @@
-//! Per-op state-machine kernels. Pure logic, no allocator, no Context, no
-//! Value, no slot tables. The single source of truth for what each
-//! patchbay op *means*; both the host evaluator (builtins.zig) and the
-//! tinyblok codegen target this surface.
-//!
-//! Source of truth: monoblok at lib/patchbay/src/kernel.zig. Tinyblok
-//! vendors a verbatim copy under main/kernel.zig; refresh with
-//! `make sync-kernel`.
-//!
-//! Style: each op is a small struct with default-initialized fields plus
-//! one `update` method, mirroring the embedded runtime in
-//! tinyblok/main/patchbay.zig. The host calls these via shims that load
-//! the struct's fields out of a StateEntry slot, run `update`, and write
-//! the fields back. Tinyblok uses the structs directly as fields of its
-//! generated `State` aggregate.
-//!
-//! Snapshot compatibility: nothing here owns persistent storage. The host
-//! continues to serialize StateEntry slots; the kernel only describes the
-//! transition function applied to those slots.
-
-/// `(squelch X)` (numeric form). Passes X through iff it differs from
-/// the last X seen. First sight always passes. Returns nil on suppress.
-///
-/// The host's full `squelch` accepts any value type and compares
-/// canonically-encoded bytes (so `1` and `1.0` are equal); this struct
-/// is the f64 specialization the codegen target uses.
+//! Per-op state-machine kernels.
 pub const Squelch = struct {
     last: f64 = 0,
     seen: bool = false,

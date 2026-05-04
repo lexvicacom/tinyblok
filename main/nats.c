@@ -1,8 +1,5 @@
-// Minimum-viable NATS client: TCP connect + non-blocking PUB + lazy PING/PONG.
-// Reconnect is throttled and silent — when the broker dies the rule loop keeps
-// running, the ring keeps buffering up to cap, and a fresh connect is attempted
-// every RECONNECT_PERIOD_US until it succeeds.
-
+// Minimum-viable NATS client, has rough edges and the occasional protocol err
+// reported by nats-server.
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -62,9 +59,6 @@ static void close_sock(int log_disconnect)
     }
 }
 
-// Try once to establish the connection. Quiet on failure (caller is the
-// reconnect loop, which would spam otherwise). The first successful connect of
-// each session logs INFO.
 static int try_connect_once(int verbose_failure)
 {
     const char *host = CONFIG_TINYBLOK_NATS_HOST;
@@ -177,7 +171,7 @@ void tinyblok_nats_drain_rx(void)
     {
         if (rx_len >= sizeof(rx_buf))
         {
-            rx_len = 0; // line longer than rx_buf; drop silently rather than wedge
+            rx_len = 0; // line longer than rx_buf; drop silently instead of getting stuck
         }
         ssize_t n = recv(sock, rx_buf + rx_len, sizeof(rx_buf) - rx_len, 0);
         if (n > 0)
