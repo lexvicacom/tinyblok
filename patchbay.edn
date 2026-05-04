@@ -9,18 +9,21 @@
 (pump "tinyblok.temp"   :from tinyblok_read_temp_c  :type f32      :hz 1)
 
 ;; --- heap: dedupe + 1 s rolling avg, alert on low ---
-(on "tinyblok.heap"
+;; :reentrant lets the deduped value re-enter rule eval so the alert below
+;; fires off the *stable* signal, not raw heap. Downstream rule sees fewer
+;; updates (only when deadband actually moves) and avoids alerting on jitter.
+(on "tinyblok.heap" :reentrant true
   (-> payload-float
       (deadband 1024)                                 ; ignore <1 KiB jitter
-      (publish! (subject-append "stable")))) 
+      (publish! (subject-append "stable"))))
 
 (on "tinyblok.heap"
   (-> payload-float
-      (moving-avg 10)                               
+      (moving-avg 10)
       (round 0)
       (publish! (subject-append "avg1s"))))
 
-(on "tinyblok.heap"
+(on "tinyblok.heap.stable"
   (when (< payload-float 20480)                       ; <20 KiB free
     (-> payload (rising-edge) (publish! "tinyblok.alert.heap.low"))))
 
@@ -61,5 +64,11 @@
     (-> payload (rising-edge) (publish! "tinyblok.alert.temp.hot"))))
 
 (on "alex"
-  (when (= payload 42) 
+  (when (= payload 42)
     (-> 1 (publish! "alex.alert"))))
+
+;; Verbatim re-publish: bare `publish!` (no `->`) forwards the original
+;; payload bytes unchanged, so ints stay as ints rather than being reformatted
+;; through %.6f. Useful for mirroring a feed to a debug subject.
+(on "tinyblok.temp"
+  (publish! "tinyblok.temp.raw"))

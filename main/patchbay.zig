@@ -43,6 +43,40 @@ pub fn emitFloat(subject: [*:0]const u8, value: f64, decimals: u8) void {
     emit(subject, buf[0..len]);
 }
 
+// Reentrant emits: monoblok lets a rule marked `:reentrant true` publish a
+// subject that re-enters rule eval, so a downstream `(on ...)` rule sees it.
+// Generated code passes its filter-table dispatcher as `redispatch`; the cap
+// mirrors monoblok's Context.max_depth.
+pub const MAX_DEPTH: u8 = 8;
+
+pub const Redispatch = *const fn (subject: []const u8, payload: []const u8, depth: u8) void;
+
+pub fn emitReentrant(
+    subject: [*:0]const u8,
+    payload: []const u8,
+    depth: u8,
+    redispatch: Redispatch,
+) void {
+    emit(subject, payload);
+    if (depth + 1 >= MAX_DEPTH) return;
+    var n: usize = 0;
+    while (subject[n] != 0) : (n += 1) {}
+    redispatch(subject[0..n], payload, depth + 1);
+}
+
+pub fn emitReentrantFloat(
+    subject: [*:0]const u8,
+    value: f64,
+    depth: u8,
+    redispatch: Redispatch,
+) void {
+    var buf: [32]u8 = undefined;
+    const n = snprintf(&buf, buf.len, "%.6f", value);
+    if (n <= 0) return;
+    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    emitReentrant(subject, buf[0..len], depth, redispatch);
+}
+
 pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     var buf: [32]u8 = undefined;
     const n = snprintf(&buf, buf.len, "%lld", value);

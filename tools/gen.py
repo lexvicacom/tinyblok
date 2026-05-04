@@ -123,6 +123,7 @@ class Slot:
 class RuleEmit:
     filter: str
     body_zig: str
+    reentrant: bool = False
 
 
 @dataclass
@@ -151,6 +152,7 @@ class Emitter:
     pumps: list[Pump] = field(default_factory=list)
     rule_idx: int = 0
     current_filter: str = ""
+    current_reentrant: bool = False
 
     def slot_name(self, prefix: str, idx: int) -> str:
         return f"rule{self.rule_idx}_{prefix}{idx}"
@@ -183,10 +185,30 @@ class Emitter:
             raise SyntaxError("(on FILTER BODY...) needs filter and body")
         filt = _expect_str(list_node[1])
         self.current_filter = filt
+        # Optional :reentrant true between filter and body. Mirrors monoblok's
+        # patchbay; default-off so a publish! doesn't accidentally re-enter
+        # rule eval and surprise an existing rule set.
+        body_start = 2
+        reentrant = False
+        while body_start < len(list_node) and isinstance(list_node[body_start], Kw):
+            kw = str(list_node[body_start])
+            if body_start + 1 >= len(list_node):
+                raise SyntaxError(f"(on ...) keyword :{kw} missing value")
+            val = list_node[body_start + 1]
+            if kw == "reentrant":
+                if not isinstance(val, Sym) or str(val) not in ("true", "false"):
+                    raise SyntaxError(":reentrant must be true or false")
+                reentrant = (str(val) == "true")
+            else:
+                raise SyntaxError(f"(on ...) unknown keyword :{kw}")
+            body_start += 2
+        if body_start >= len(list_node):
+            raise SyntaxError("(on FILTER ... BODY) missing body")
+        self.current_reentrant = reentrant
         body_parts: list[str] = []
-        for form in list_node[2:]:
+        for form in list_node[body_start:]:
             self._emit_form(body_parts, form)
-        self.rules.append(RuleEmit(filter=filt, body_zig="".join(body_parts)))
+        self.rules.append(RuleEmit(filter=filt, body_zig="".join(body_parts), reentrant=reentrant))
         self.rule_idx += 1
 
     def _emit_form(self, out: list[str], n: Node) -> None:
@@ -199,7 +221,9 @@ class Emitter:
         elif head == "when":
             self._emit_when(out, lst)
         elif head in ("publish!", "publish"):
-            self._emit_terminal_publish(out, lst, None)
+            # Bare top-level publish republishes the original payload bytes.
+            # Inside `->`, value_var carries the transformed float instead.
+            self._emit_terminal_publish(out, lst, None, raw_payload=True)
         else:
             raise SyntaxError(f"unknown rule form: {head}")
 
@@ -227,7 +251,7 @@ class Emitter:
                 if not last:
                     raise SyntaxError("publish! must be last in ->")
                 vv = None if post_edge else current_var
-                self._emit_terminal_publish(out, op_list, vv)
+                self._emit_terminal_publish(out, op_list, vv, raw_payload=False)
                 continue
 
             next_var = current_var + 1
@@ -296,7 +320,8 @@ class Emitter:
                 out.append(f"        _ = __v{in_var + 1}; // skipped: ({head} ...)\n")
 
     def _emit_terminal_publish(
-        self, out: list[str], op_list: list, value_var: int | None
+        self, out: list[str], op_list: list, value_var: int | None,
+        raw_payload: bool = False,
     ) -> None:
         if len(op_list) < 2:
             raise SyntaxError("publish! needs target")
@@ -314,10 +339,35 @@ class Emitter:
         else:
             raise SyntaxError("unknown publish target")
 
-        if value_var is not None:
-            out.append(f"        pb.emitFloat({target_zig}, __v{value_var}, 6);\n")
+        # Three cases for what gets sent:
+        #   value_var: float result of a `->` chain (formatted %.6f)
+        #   raw_payload: original payload bytes from a bare top-level (publish!)
+        #   neither: post-edge marker "1" (rising/falling-edge gates discard the value)
+        if raw_payload:
+            payload_zig = "payload_raw"
         else:
-            out.append(f'        pb.emit({target_zig}, "1");\n')
+            payload_zig = None  # signals "use float var or '1' below"
+
+        if self.current_reentrant:
+            if value_var is not None:
+                out.append(
+                    f"        pb.emitReentrantFloat({target_zig}, __v{value_var}, depth, &dispatchInternal);\n"
+                )
+            elif payload_zig is not None:
+                out.append(
+                    f"        pb.emitReentrant({target_zig}, {payload_zig}, depth, &dispatchInternal);\n"
+                )
+            else:
+                out.append(
+                    f'        pb.emitReentrant({target_zig}, "1", depth, &dispatchInternal);\n'
+                )
+        else:
+            if value_var is not None:
+                out.append(f"        pb.emitFloat({target_zig}, __v{value_var}, 6);\n")
+            elif payload_zig is not None:
+                out.append(f"        pb.emit({target_zig}, {payload_zig});\n")
+            else:
+                out.append(f'        pb.emit({target_zig}, "1");\n')
 
     def _emit_when(self, out: list[str], lst: list) -> None:
         if len(lst) < 3:
@@ -383,9 +433,22 @@ class Emitter:
         for r in self.rules:
             if r.filter not in seen:
                 seen.append(r.filter)
+        # `depth` and `payload_raw` are always passed in so the dispatcher's
+        # call sites stay uniform. Discard them up front when this filter's
+        # rules don't use them — Zig rejects unused params otherwise.
         for filt in seen:
             fn_name = _filter_to_fn_name(filt)
-            out.append(f"fn {fn_name}(payload_float: f64) void {{\n")
+            filt_reentrant = any(r.reentrant for r in self.rules if r.filter == filt)
+            filt_uses_raw = any(
+                "payload_raw" in r.body_zig for r in self.rules if r.filter == filt
+            )
+            out.append(
+                f"fn {fn_name}(payload_float: f64, payload_raw: []const u8, depth: u8) void {{\n"
+            )
+            if not filt_reentrant:
+                out.append("    _ = depth;\n")
+            if not filt_uses_raw:
+                out.append("    _ = payload_raw;\n")
             for r in self.rules:
                 if r.filter == filt:
                     out.append(r.body_zig)
@@ -400,6 +463,11 @@ class Emitter:
             "}\n"
             "\n"
             "pub fn dispatch(subject: []const u8, payload: []const u8) void {\n"
+            "    dispatchInternal(subject, payload, 0);\n"
+            "}\n"
+            "\n"
+            "fn dispatchInternal(subject: []const u8, payload: []const u8, depth: u8) void {\n"
+            "    if (depth >= pb.MAX_DEPTH) return;\n"
             "    var subj_buf: [64]u8 = undefined;\n"
             "    if (subject.len + 1 > subj_buf.len) return;\n"
             "    @memcpy(subj_buf[0..subject.len], subject);\n"
@@ -412,7 +480,9 @@ class Emitter:
             "    pl_buf[payload.len] = 0;\n"
             "    const pl_z: [*:0]const u8 = @ptrCast(&pl_buf);\n"
             "\n"
-            "    pb.emit(subj_z, payload);\n"
+            "    // Top-level inputs are wired to NATS; re-entered subjects are\n"
+            "    // already on the wire via pb.emitReentrant before we recurse.\n"
+            "    if (depth == 0) pb.emit(subj_z, payload);\n"
             "    const v: f64 = strtod(pl_z, null);\n"
             "\n"
         )
@@ -420,8 +490,11 @@ class Emitter:
         for i, filt in enumerate(seen):
             fn_name = _filter_to_fn_name(filt)
             kw = "if" if i == 0 else "} else if"
-            out.append(f'    {kw} (eql(subject, "{filt}")) {{\n        {fn_name}(v);\n')
+            out.append(
+                f'    {kw} (eql(subject, "{filt}")) {{\n        {fn_name}(v, payload, depth);\n'
+            )
         out.append("    }\n}\n")
+
 
         if self.pumps:
             out.append(self._render_collect())
