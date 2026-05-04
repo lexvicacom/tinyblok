@@ -1,12 +1,12 @@
 # tinyblok
 
-ESP-IDF project that links a Zig static library, as groundwork for one day linking the patchbay from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) on-device and shipping sensor data back to a monoblok daemon.
+ESP-IDF project that links a Zig static library, as groundwork for one day linking the patchbay from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) on-device and shipping sensor data back to a NATS cluster (or monoblok) over TCP. [Read the introductory blog post](https://alexjreid.dev/posts/tinyblok/)
 
-Status:
-- Connects to wifi (run make menuconfig)
-- Connects to a NATS broker over TCP (host/port also in menuconfig under "tinyblok") and sends `CONNECT` and `PUB`. 
+## Status
+- Connects to wifi (run make menuconfig to setup)
+- Connects to a NATS broker over TCP (host/port config also in menuconfig under "tinyblok")
 - Run make build flash and then make monitor if you want to connect and run
-- emits to a handful of `tinyblock.>` subjects
+- emits to a handful of `tinyblock.>` subjects on specified broker, see the [patchbay.edn](./patchbay.edn)
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
