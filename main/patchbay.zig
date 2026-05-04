@@ -1,8 +1,21 @@
 // Embedded patchbay runtime. No IDF deps, no allocator, no globals.
 // `publish!` enqueues into tx_ring; rules.collect() drains once at the end of
 // each tick, after all dispatches have produced their emits.
+//
+// Op state machines (Squelch, Deadband, MovingAvg, edges) live in `kernel.zig`,
+// vendored from monoblok. Throttle stays local because it speaks microseconds
+// against `tinyblok_uptime_us()` while monoblok's hold-off is millisecond-based.
 
 const tx_ring = @import("tx_ring.zig");
+const kernel = @import("kernel.zig");
+
+pub const Squelch = kernel.Squelch;
+pub const Deadband = kernel.Deadband;
+pub const Changed = kernel.Changed;
+pub const Delta = kernel.Delta;
+pub const RisingEdge = kernel.RisingEdge;
+pub const FallingEdge = kernel.FallingEdge;
+pub const MovingAvg = kernel.MovingAvg;
 
 // std.fmt pulls in __udivti3 which compiler-rt for riscv32-freestanding lacks.
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
@@ -38,100 +51,11 @@ pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     emit(subject, buf[0..len]);
 }
 
-pub const Deadband = struct {
-    threshold: f64,
-    last: f64 = 0,
-    seen: bool = false,
-
-    pub fn update(self: *Deadband, x: f64) ?f64 {
-        if (!self.seen) {
-            self.seen = true;
-            self.last = x;
-            return x;
-        }
-        const d = if (x > self.last) x - self.last else self.last - x;
-        if (d < self.threshold) return null;
-        self.last = x;
-        return x;
-    }
-};
-
-/// Pass value through if it differs from last. First sight always emits.
-pub const Squelch = struct {
-    last: f64 = 0,
-    seen: bool = false,
-
-    pub fn update(self: *Squelch, x: f64) ?f64 {
-        if (!self.seen) {
-            self.seen = true;
-            self.last = x;
-            return x;
-        }
-        if (x == self.last) return null;
-        self.last = x;
-        return x;
-    }
-};
-
-/// Tick-window moving average over N samples. Emits running mean every call.
-pub fn MovingAvg(comptime N: usize) type {
-    return struct {
-        const Self = @This();
-        buf: [N]f64 = [_]f64{0} ** N,
-        head: usize = 0,
-        count: usize = 0,
-        sum: f64 = 0,
-
-        pub fn update(self: *Self, x: f64) f64 {
-            if (self.count == N) {
-                self.sum -= self.buf[self.head];
-            } else {
-                self.count += 1;
-            }
-            self.buf[self.head] = x;
-            self.sum += x;
-            self.head = (self.head + 1) % N;
-            return self.sum / @as(f64, @floatFromInt(self.count));
-        }
-    };
-}
-
-/// Fires once on false->true. First sight never fires (per monoblok semantics).
-pub const RisingEdge = struct {
-    last: bool = false,
-    seen: bool = false,
-
-    pub fn update(self: *RisingEdge, cond: bool) bool {
-        if (!self.seen) {
-            self.seen = true;
-            self.last = cond;
-            return false;
-        }
-        const fire = cond and !self.last;
-        self.last = cond;
-        return fire;
-    }
-};
-
-/// Fires once on true->false. First sight never fires.
-pub const FallingEdge = struct {
-    last: bool = false,
-    seen: bool = false,
-
-    pub fn update(self: *FallingEdge, cond: bool) bool {
-        if (!self.seen) {
-            self.seen = true;
-            self.last = cond;
-            return false;
-        }
-        const fire = !cond and self.last;
-        self.last = cond;
-        return fire;
-    }
-};
-
 /// Pass at most one sample per `interval_us` microseconds. First sight always passes.
 /// Caller supplies `now_us` (so the runtime stays clock-source-agnostic).
+///
+/// Local because tinyblok's clock source is microseconds (`tinyblok_uptime_us()`).
+/// kernel.HoldOff is the millisecond sibling for the host evaluator.
 pub const Throttle = struct {
     interval_us: u64,
     last_us: u64 = 0,
