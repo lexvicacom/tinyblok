@@ -1,5 +1,10 @@
-// Minimum-viable NATS client, has rough edges and the occasional protocol err
-// reported by nats-server.
+// Minimum-viable NATS client. Plaintext or TLS-via-INFO-upgrade depending
+// on Kconfig; auth none / user+pass / .creds (JWT + Ed25519 nonce sig).
+//
+// TLS path: BSD-socket connect → plaintext recv(INFO) → mbedTLS handshake
+// on the same fd → all subsequent I/O through mbedtls_ssl_read/write.
+// This matches what NGS and most real brokers expect ("tls_required":true
+// in INFO, with the client upgrading the existing TCP stream).
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -12,6 +17,19 @@
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
 
+#if CONFIG_TINYBLOK_NATS_TLS
+#include "mbedtls/ssl.h"
+#include "mbedtls/error.h"
+#include "psa/crypto.h"
+#if CONFIG_TINYBLOK_NATS_TLS_BUNDLE
+#include "esp_crt_bundle.h"
+#endif
+#endif
+
+#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#include "creds.h"
+#endif
+
 static const char *TAG = "nats";
 
 // Implemented in tx_ring.zig.
@@ -21,18 +39,89 @@ extern void tinyblok_tx_ring_reset_in_flight(void);
 
 static int sock = -1;
 
-static char rx_buf[256];
+#if CONFIG_TINYBLOK_NATS_TLS
+static int tls_active = 0;
+static mbedtls_ssl_context ssl;
+static mbedtls_ssl_config ssl_conf;
+static int tls_inited = 0;
+#endif
+
+#define NET_OPEN() (sock >= 0)
+
+static char rx_buf[768];
 static size_t rx_len = 0;
 
 static int64_t last_connect_attempt_us = 0;
 #define RECONNECT_PERIOD_US (5LL * 1000 * 1000)
+// When the broker rejects us with `-ERR ...`, back off longer than the
+// usual reconnect period. NGS leaves dead connections counting against the
+// account cap for several minutes, so hammering once every 5s makes the
+// "maximum active connections" error self-perpetuating.
+#define RECONNECT_AFTER_ERR_US (60LL * 1000 * 1000)
+static int64_t backoff_until_us = 0;
 
-static int send_all_blocking(int fd, const char *buf, size_t len)
+// ---------------------------------------------------------------- net wrappers
+
+#if CONFIG_TINYBLOK_NATS_TLS
+// mbedTLS BIO callbacks: forward to the underlying BSD socket. We use the
+// blocking variants during handshake (mbedtls_ssl_read/write loop on
+// WANT_READ/WANT_WRITE) and rely on the post-CONNECT O_NONBLOCK flip for
+// steady-state I/O.
+static int bio_send(void *ctx, const unsigned char *buf, size_t len)
 {
+    int fd = (int)(intptr_t)ctx;
+    ssize_t n = send(fd, buf, len, 0);
+    if (n >= 0)
+        return (int)n;
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return MBEDTLS_ERR_SSL_WANT_WRITE;
+    if (errno == EINTR)
+        return MBEDTLS_ERR_SSL_WANT_WRITE;
+    return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+
+static int bio_recv(void *ctx, unsigned char *buf, size_t len)
+{
+    int fd = (int)(intptr_t)ctx;
+    ssize_t n = recv(fd, buf, len, 0);
+    if (n > 0)
+        return (int)n;
+    if (n == 0)
+        return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return MBEDTLS_ERR_SSL_WANT_READ;
+    if (errno == EINTR)
+        return MBEDTLS_ERR_SSL_WANT_READ;
+    return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+#endif
+
+// Blocking send-all. Returns 0 on success, -1 on hard failure.
+static int net_send_all(const void *buf, size_t len)
+{
+    const char *p = (const char *)buf;
     size_t off = 0;
+#if CONFIG_TINYBLOK_NATS_TLS
+    if (tls_active)
+    {
+        while (off < len)
+        {
+            int n = mbedtls_ssl_write(&ssl, (const unsigned char *)p + off, len - off);
+            if (n > 0)
+            {
+                off += (size_t)n;
+                continue;
+            }
+            if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE)
+                continue;
+            return -1;
+        }
+        return 0;
+    }
+#endif
     while (off < len)
     {
-        ssize_t n = send(fd, buf + off, len - off, 0);
+        ssize_t n = send(sock, p + off, len - off, 0);
         if (n < 0)
         {
             if (errno == EINTR)
@@ -44,26 +133,261 @@ static int send_all_blocking(int fd, const char *buf, size_t len)
     return 0;
 }
 
-static void close_sock(int log_disconnect)
+// Non-blocking-ish receive. Returns >0 byte count, 0 if peer closed,
+// -1 on real error, or -2 if there is no data right now (would-block).
+static ssize_t net_recv(void *buf, size_t cap)
 {
+#if CONFIG_TINYBLOK_NATS_TLS
+    if (tls_active)
+    {
+        int n = mbedtls_ssl_read(&ssl, (unsigned char *)buf, cap);
+        if (n > 0)
+            return n;
+        if (n == 0 || n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
+            return 0;
+        if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE)
+            return -2;
+        return -1;
+    }
+#endif
+    ssize_t n = recv(sock, buf, cap, 0);
+    if (n > 0)
+        return n;
+    if (n == 0)
+        return 0;
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return -2;
+    if (errno == EINTR)
+        return -2;
+    return -1;
+}
+
+// One non-blocking write attempt. Returns bytes written (>=0), or -1 on
+// hard error.
+static ssize_t net_try_send(const void *buf, size_t len)
+{
+#if CONFIG_TINYBLOK_NATS_TLS
+    if (tls_active)
+    {
+        int n = mbedtls_ssl_write(&ssl, (const unsigned char *)buf, len);
+        if (n >= 0)
+            return n;
+        if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE)
+            return 0;
+        return -1;
+    }
+#endif
+    ssize_t n = send(sock, buf, len, 0);
+    if (n >= 0)
+        return n;
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        return 0;
+    return -1;
+}
+
+static void net_close(void)
+{
+#if CONFIG_TINYBLOK_NATS_TLS
+    if (tls_active)
+    {
+        mbedtls_ssl_close_notify(&ssl);
+        mbedtls_ssl_session_reset(&ssl);
+        tls_active = 0;
+    }
+#endif
     if (sock >= 0)
     {
         close(sock);
         sock = -1;
+    }
+}
+
+static void close_sock(int log_disconnect)
+{
+    if (NET_OPEN())
+    {
+        net_close();
         rx_len = 0;
-        // The head record may be partway through a send. The new connection
-        // hasn't seen those bytes, so restart the record from byte 0 on next drain.
+        // Head record may be partway through a send; the new connection
+        // hasn't seen those bytes, so restart it from byte 0 on next drain.
         tinyblok_tx_ring_reset_in_flight();
         if (log_disconnect)
             ESP_LOGW(TAG, "broker disconnected; will retry");
     }
 }
 
+// ---------------------------------------------------------------- TLS setup
+
+#if CONFIG_TINYBLOK_NATS_TLS
+// Lazily initialize the long-lived mbedTLS state on first connect. Reused
+// across reconnects via `mbedtls_ssl_session_reset`.
+static int tls_init_once(const char *host)
+{
+    if (tls_inited)
+        return 0;
+
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&ssl_conf);
+
+    psa_status_t ps = psa_crypto_init();
+    if (ps != PSA_SUCCESS && ps != PSA_ERROR_ALREADY_EXISTS)
+    {
+        ESP_LOGE(TAG, "psa_crypto_init failed: %d", (int)ps);
+        return -1;
+    }
+
+    int rc = mbedtls_ssl_config_defaults(&ssl_conf, MBEDTLS_SSL_IS_CLIENT,
+                                         MBEDTLS_SSL_TRANSPORT_STREAM,
+                                         MBEDTLS_SSL_PRESET_DEFAULT);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "ssl_config_defaults failed: -0x%04x", -rc);
+        return -1;
+    }
+
+#if CONFIG_TINYBLOK_NATS_TLS_BUNDLE
+    mbedtls_ssl_conf_authmode(&ssl_conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    rc = esp_crt_bundle_attach(&ssl_conf);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "esp_crt_bundle_attach failed: 0x%x", rc);
+        return -1;
+    }
+#else
+    mbedtls_ssl_conf_authmode(&ssl_conf, MBEDTLS_SSL_VERIFY_NONE);
+#endif
+
+    rc = mbedtls_ssl_setup(&ssl, &ssl_conf);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "ssl_setup failed: -0x%04x", -rc);
+        return -1;
+    }
+    rc = mbedtls_ssl_set_hostname(&ssl, host);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "ssl_set_hostname failed: -0x%04x", -rc);
+        return -1;
+    }
+
+    tls_inited = 1;
+    return 0;
+}
+
+// Run the handshake on the existing fd to completion. Returns 0 on success.
+static int tls_handshake(void)
+{
+    mbedtls_ssl_set_bio(&ssl, (void *)(intptr_t)sock, bio_send, bio_recv, NULL);
+
+    for (;;)
+    {
+        int rc = mbedtls_ssl_handshake(&ssl);
+        if (rc == 0)
+            return 0;
+        if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
+            continue;
+        char err[128];
+        mbedtls_strerror(rc, err, sizeof(err));
+        ESP_LOGE(TAG, "ssl_handshake failed: -0x%04x (%s)", -rc, err);
+        return -1;
+    }
+}
+#endif
+
+// ---------------------------------------------------------------- connect/auth
+
+#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+// Locate the JSON `"nonce":"..."` field in an INFO line and copy its value
+// to `out` (NUL-terminated). Returns the length on success, -1 if absent.
+static int extract_nonce(const char *info, size_t info_len, char *out, size_t out_cap)
+{
+    static const char key[] = "\"nonce\":\"";
+    const char *p = memmem(info, info_len, key, sizeof(key) - 1);
+    if (!p)
+        return -1;
+    p += sizeof(key) - 1;
+    const char *end = memchr(p, '"', info_len - (size_t)(p - info));
+    if (!end)
+        return -1;
+    size_t n = (size_t)(end - p);
+    if (n + 1 > out_cap)
+        return -1;
+    memcpy(out, p, n);
+    out[n] = '\0';
+    return (int)n;
+}
+#endif
+
+// Build a CONNECT line into `out` (NUL-terminated). Returns the byte length
+// (excluding NUL), or -1 on overflow / sign failure.
+static int build_connect_line(const char *info, size_t info_len, char *out, size_t out_cap)
+{
+    (void)info;
+    (void)info_len;
+
+    static const char common[] =
+        "\"verbose\":false,\"pedantic\":false,"
+        "\"name\":\"" CONFIG_TINYBLOK_NATS_CLIENT_NAME "\","
+        "\"lang\":\"c\",\"version\":\"0.1\","
+#if CONFIG_TINYBLOK_NATS_TLS
+        "\"tls_required\":true";
+#else
+        "\"tls_required\":false";
+#endif
+
+#if CONFIG_TINYBLOK_NATS_AUTH_USERPASS
+    int n = snprintf(out, out_cap,
+                     "CONNECT {%s,\"user\":\"%s\",\"pass\":\"%s\"}\r\n",
+                     common, CONFIG_TINYBLOK_NATS_USER, CONFIG_TINYBLOK_NATS_PASS);
+    if (n <= 0 || (size_t)n >= out_cap)
+        return -1;
+    return n;
+
+#elif CONFIG_TINYBLOK_NATS_AUTH_CREDS
+    const tinyblok_creds_t *c = tinyblok_creds_get();
+    if (!c)
+    {
+        ESP_LOGE(TAG, "creds not loaded");
+        return -1;
+    }
+
+    char nonce[128];
+    int nonce_len = extract_nonce(info, info_len, nonce, sizeof(nonce));
+    if (nonce_len <= 0)
+    {
+        ESP_LOGE(TAG, "no nonce in INFO; broker may not require auth");
+        return -1;
+    }
+
+    unsigned char sig[64];
+    if (tinyblok_creds_sign((const unsigned char *)nonce, (size_t)nonce_len, sig) != 0)
+        return -1;
+
+    char sig_b64[96];
+    tinyblok_b64url_encode(sig, 64, sig_b64);
+
+    int n = snprintf(out, out_cap,
+                     "CONNECT {%s,\"jwt\":\"%s\",\"sig\":\"%s\"}\r\n",
+                     common, c->jwt, sig_b64);
+    if (n <= 0 || (size_t)n >= out_cap)
+        return -1;
+    return n;
+
+#else
+    int n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
+    if (n <= 0 || (size_t)n >= out_cap)
+        return -1;
+    return n;
+#endif
+}
+
 static int try_connect_once(int verbose_failure)
 {
     const char *host = CONFIG_TINYBLOK_NATS_HOST;
+    int port = CONFIG_TINYBLOK_NATS_PORT;
+
     char port_str[8];
-    snprintf(port_str, sizeof(port_str), "%d", CONFIG_TINYBLOK_NATS_PORT);
+    snprintf(port_str, sizeof(port_str), "%d", port);
 
     struct addrinfo hints = {0};
     hints.ai_family = AF_INET;
@@ -96,42 +420,78 @@ static int try_connect_once(int verbose_failure)
         return -1;
     }
     freeaddrinfo(res);
+    sock = fd;
 
-    char info_buf[512];
-    ssize_t n = recv(fd, info_buf, sizeof(info_buf) - 1, 0);
+    // Read plaintext INFO. The server sends it immediately after accept,
+    // both for plaintext brokers and for TLS-upgrade brokers (TLS happens
+    // after this byte, not before).
+    static char info_buf[768];
+    ssize_t n = net_recv(info_buf, sizeof(info_buf) - 1);
     if (n <= 0)
     {
         if (verbose_failure)
-            ESP_LOGE(TAG, "recv(INFO) failed: n=%d errno=%d", (int)n, errno);
-        close(fd);
+            ESP_LOGE(TAG, "recv(INFO) failed: n=%d", (int)n);
+        net_close();
         return -1;
     }
     info_buf[n] = '\0';
-    while (n > 0 && (info_buf[n - 1] == '\n' || info_buf[n - 1] == '\r'))
-    {
-        info_buf[--n] = '\0';
-    }
+    size_t info_len = (size_t)n;
+    while (info_len > 0 && (info_buf[info_len - 1] == '\n' || info_buf[info_len - 1] == '\r'))
+        info_buf[--info_len] = '\0';
 
-    static const char connect_line[] = "CONNECT {\"verbose\":false,\"pedantic\":false}\r\n";
-    if (send_all_blocking(fd, connect_line, sizeof(connect_line) - 1) != 0)
+#if CONFIG_TINYBLOK_NATS_TLS
+    // Upgrade. We don't bother checking `"tls_required":true` in INFO —
+    // we asked for TLS at build time, the broker had better be configured
+    // for it, and the handshake itself will tell us if it's not.
+    if (tls_init_once(host) != 0)
+    {
+        net_close();
+        return -1;
+    }
+    if (tls_handshake() != 0)
+    {
+        net_close();
+        return -1;
+    }
+    tls_active = 1;
+#endif
+
+    static char connect_line[2560];
+    int connect_len = build_connect_line(info_buf, info_len, connect_line, sizeof(connect_line));
+    if (connect_len < 0)
     {
         if (verbose_failure)
-            ESP_LOGE(TAG, "send(CONNECT) failed: errno=%d", errno);
-        close(fd);
+            ESP_LOGE(TAG, "could not build CONNECT line");
+        net_close();
+        return -1;
+    }
+    if (net_send_all(connect_line, (size_t)connect_len) != 0)
+    {
+        if (verbose_failure)
+            ESP_LOGE(TAG, "send(CONNECT) failed");
+        net_close();
         return -1;
     }
 
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    // Switch the underlying socket to non-blocking now that the handshake
+    // and CONNECT have finished. Steady-state reads get EAGAIN instead of
+    // blocking the main loop.
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0)
     {
         if (verbose_failure)
             ESP_LOGE(TAG, "fcntl(O_NONBLOCK) failed: errno=%d", errno);
-        close(fd);
+        net_close();
         return -1;
     }
 
-    sock = fd;
-    ESP_LOGI(TAG, "connected %s:%s", host, port_str);
+    ESP_LOGI(TAG, "connected %s:%d%s", host, port,
+#if CONFIG_TINYBLOK_NATS_TLS
+             " (tls)"
+#else
+             ""
+#endif
+    );
     ESP_LOGI(TAG, "<- %s", info_buf);
     size_t backlog_bytes = tinyblok_tx_ring_used();
     if (backlog_bytes > 0)
@@ -144,54 +504,55 @@ static int try_connect_once(int verbose_failure)
 
 int tinyblok_nats_connect(void)
 {
+#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+    if (tinyblok_creds_load() != 0)
+    {
+        ESP_LOGE(TAG, "creds load failed; aborting connect");
+        return -1;
+    }
+#endif
     last_connect_attempt_us = esp_timer_get_time();
     return try_connect_once(1);
 }
 
-// Called every tick. If disconnected, attempt a reconnect at most once per
-// RECONNECT_PERIOD_US. Silent on failure.
 void tinyblok_nats_maintain(void)
 {
-    if (sock >= 0)
+    if (NET_OPEN())
         return;
     int64_t now = esp_timer_get_time();
+    if (now < backoff_until_us)
+        return;
     if (now - last_connect_attempt_us < RECONNECT_PERIOD_US)
         return;
     last_connect_attempt_us = now;
     (void)try_connect_once(0);
 }
 
-// Drain pending inbound bytes, reply PONG to any PING, log+drop the rest.
 void tinyblok_nats_drain_rx(void)
 {
-    if (sock < 0)
+    if (!NET_OPEN())
         return;
 
+    int peer_closed = 0;
     for (;;)
     {
         if (rx_len >= sizeof(rx_buf))
         {
             rx_len = 0; // line longer than rx_buf; drop silently instead of getting stuck
         }
-        ssize_t n = recv(sock, rx_buf + rx_len, sizeof(rx_buf) - rx_len, 0);
+        ssize_t n = net_recv(rx_buf + rx_len, sizeof(rx_buf) - rx_len);
         if (n > 0)
         {
             rx_len += (size_t)n;
+            continue;
         }
-        else if (n == 0)
-        {
-            close_sock(1);
-            return;
-        }
-        else
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                break;
-            if (errno == EINTR)
-                continue;
-            close_sock(1);
-            return;
-        }
+        if (n == -2)
+            break;
+        // n == 0 (EOF) or n < 0 (error). Don't tear down yet — the broker
+        // may have flushed an `-ERR ...\r\n` immediately before closing.
+        // Scan what we have so the diagnostic gets logged.
+        peer_closed = 1;
+        break;
     }
 
     size_t scan = 0;
@@ -206,11 +567,18 @@ void tinyblok_nats_drain_rx(void)
 
         if (line_len == 4 && memcmp(line, "PING", 4) == 0)
         {
-            if (send_all_blocking(sock, "PONG\r\n", 6) != 0)
+            if (net_send_all("PONG\r\n", 6) != 0)
             {
                 close_sock(1);
                 return;
             }
+        }
+        else if (line_len >= 4 && memcmp(line, "-ERR", 4) == 0)
+        {
+            ESP_LOGW(TAG, "<- %.*s (backing off %llds)",
+                     (int)(line_len > 120 ? 120 : line_len), line,
+                     RECONNECT_AFTER_ERR_US / 1000000);
+            backoff_until_us = esp_timer_get_time() + RECONNECT_AFTER_ERR_US;
         }
         else if (line_len > 0)
         {
@@ -218,6 +586,12 @@ void tinyblok_nats_drain_rx(void)
         }
 
         scan += line_len + 2;
+    }
+
+    if (peer_closed)
+    {
+        close_sock(1);
+        return;
     }
 
     if (scan > 0)
@@ -228,20 +602,17 @@ void tinyblok_nats_drain_rx(void)
     }
 }
 
-// One non-blocking send. Returns bytes written (>=0), or -1 on real error
-// (socket torn down so subsequent calls fail fast).
 ssize_t tinyblok_nats_try_send(const unsigned char *data, size_t len)
 {
-    if (sock < 0)
+    if (!NET_OPEN())
         return -1;
     if (len == 0)
         return 0;
-
-    ssize_t n = send(sock, data, len, 0);
-    if (n >= 0)
-        return n;
-    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-        return 0;
-    close_sock(1);
-    return -1;
+    ssize_t n = net_try_send(data, len);
+    if (n < 0)
+    {
+        close_sock(1);
+        return -1;
+    }
+    return n;
 }

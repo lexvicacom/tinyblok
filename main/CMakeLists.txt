@@ -1,8 +1,39 @@
+# Always list every optional source/dep here. IDF's component manager parses
+# this call eagerly, so conditionals that depend on Kconfig values must be
+# applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
-    SRCS "stub.c" "nats.c" "drivers.c" "sources.c"
+    SRCS "stub.c" "nats.c" "drivers.c" "sources.c" "creds.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_wifi esp_event esp_netif nvs_flash lwip
 )
+
+if(CONFIG_TINYBLOK_NATS_TLS)
+    idf_component_optional_requires(PRIVATE esp-tls mbedtls)
+endif()
+
+# Embed the .creds file as a NUL-terminated text blob accessible via the
+# `_binary_nats_creds_start` / `_binary_nats_creds_end` linker symbols, and
+# pull in monocypher for Ed25519 signing. Both only when creds auth is on.
+if(CONFIG_TINYBLOK_NATS_AUTH_CREDS)
+    target_sources(${COMPONENT_LIB} PRIVATE "tweetnacl.c" "ed25519.c")
+    # TweetNaCl predates GCC 14's stricter -Wunterminated-string-initialization
+    # and uses `static const u8 sigma[16] = "expand 32-byte k"` (17 chars
+    # including NUL into a 16-byte array — intentional, the NUL is unwanted).
+    # Suppress only on tweetnacl.c.
+    set_source_files_properties(tweetnacl.c PROPERTIES
+        COMPILE_FLAGS "-Wno-error=unterminated-string-initialization")
+
+    set(CREDS_FILE ${CMAKE_SOURCE_DIR}/${CONFIG_TINYBLOK_NATS_CREDS_FILE})
+    if(NOT EXISTS ${CREDS_FILE})
+        message(FATAL_ERROR
+            "TINYBLOK_NATS_AUTH_CREDS is enabled but ${CREDS_FILE} does not exist. "
+            "Generate one with `nsc generate creds -a <account> -n <user>` "
+            "or copy secrets/nats.creds.example as a starting point. "
+            "Path is configurable via CONFIG_TINYBLOK_NATS_CREDS_FILE.")
+    endif()
+    target_add_binary_data(${COMPONENT_LIB} ${CREDS_FILE} TEXT
+                           RENAME_TO nats_creds)
+endif()
 
 set(ZIG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.zig)
 set(GEN_SCRIPT ${CMAKE_SOURCE_DIR}/tools/gen.py)
