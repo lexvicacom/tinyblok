@@ -374,7 +374,7 @@ static int build_connect_line(const char *info, size_t info_len, char *out, size
     return n;
 
 #else
-    int n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
+        int n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
     if (n <= 0 || (size_t)n >= out_cap)
         return -1;
     return n;

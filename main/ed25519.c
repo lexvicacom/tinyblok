@@ -9,6 +9,8 @@
 // randombytes() must still be defined for the linker. It's never called on
 // our paths, but if some unused TweetNaCl entrypoint references it the
 // linker would otherwise drop the whole TU. Stub returns nothing useful.
+//
+// Claude came up with this. Needs review.
 #include "tweetnacl.h"
 
 #include <stddef.h>

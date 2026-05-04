@@ -1,21 +1,6 @@
 // Parser for NATS .creds files (JWT block + NKey-seed block) and the
 // Ed25519 nonce-signing primitive that goes with them.
 //
-// .creds layout — two armored blocks in a single text file:
-//
-//   -----BEGIN NATS USER JWT-----
-//   <base64url JWT, one line>
-//   ------END NATS USER JWT------
-//   ...
-//   -----BEGIN USER NKEY SEED-----
-//   <base32 seed, one line>
-//   ------END USER NKEY SEED------
-//
-// The base32 seed decodes to: 1 prefix byte (0x90 = "user seed"), 32 bytes
-// of raw Ed25519 private key material, 2 bytes of CRC16/XMODEM over the
-// preceding 33 bytes. We verify CRC, drop prefix and CRC, keep the 32-byte
-// middle.
-//
 // Compile-conditional on TINYBLOK_NATS_AUTH_CREDS — registered as a source
 // in main/CMakeLists.txt only in that branch.
 #include "creds.h"
@@ -121,10 +106,6 @@ static int base32_decode(const char *in, size_t in_len, unsigned char *out, size
     return (int)out_len;
 }
 
-// ---------------------------------------------------------------- CRC16/XMODEM
-
-// Polynomial 0x1021, init 0x0000, no reflection. Computed table-free; .creds
-// CRC verification runs once at boot, so the ~256-byte table isn't worth it.
 static uint16_t crc16_xmodem(const unsigned char *data, size_t len)
 {
     uint16_t crc = 0;
@@ -136,8 +117,6 @@ static uint16_t crc16_xmodem(const unsigned char *data, size_t len)
     }
     return crc;
 }
-
-// ---------------------------------------------------------------- base64url
 
 static const char b64url_alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -267,13 +246,17 @@ int tinyblok_creds_load(void) { return -1; }
 const tinyblok_creds_t *tinyblok_creds_get(void) { return NULL; }
 int tinyblok_creds_sign(const unsigned char *msg, size_t msg_len, unsigned char sig_out[64])
 {
-    (void)msg; (void)msg_len; (void)sig_out;
+    (void)msg;
+    (void)msg_len;
+    (void)sig_out;
     return -1;
 }
 size_t tinyblok_b64url_encode(const unsigned char *in, size_t len, char *out)
 {
-    (void)in; (void)len;
-    if (out) *out = '\0';
+    (void)in;
+    (void)len;
+    if (out)
+        *out = '\0';
     return 0;
 }
 
