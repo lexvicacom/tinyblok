@@ -26,4 +26,85 @@ menu "tinyblok"
         help
             TCP port of the NATS broker. Standard is 4222.
 
+    config TINYBLOK_NATS_CLIENT_NAME
+        string "NATS client name"
+        default "tinyblok"
+        help
+            Sent in the CONNECT JSON as the `name` field. Surfaced in
+            nats-server logs and the monitoring port (`/connz`) so a
+            broker operator can tell devices apart. Cosmetic only —
+            access control is handled separately via auth.
+
+    config TINYBLOK_NATS_TLS
+        bool "Use TLS for NATS connection"
+        default n
+        help
+            Connect to the broker over TLS via esp-tls / mbedTLS.
+            Adds ~100 KB flash and ~30 KB RAM. Leave off for a
+            plaintext broker on a trusted LAN.
+
+            Assumes "handshake-first" TLS (server speaks TLS
+            immediately on the configured port). The upgrade-style
+            handshake triggered by INFO's tls_required field is not
+            supported.
+
+    config TINYBLOK_NATS_TLS_BUNDLE
+        bool "Verify server with built-in CA bundle"
+        depends on TINYBLOK_NATS_TLS
+        default y
+        help
+            Use ESP-IDF's bundled Mozilla CA roots to verify the
+            broker's certificate. Disable for self-signed brokers
+            (insecure: skips verification).
+
+    choice TINYBLOK_NATS_AUTH
+        prompt "NATS authentication"
+        default TINYBLOK_NATS_AUTH_NONE
+
+        config TINYBLOK_NATS_AUTH_NONE
+            bool "None"
+            help
+                No authentication; CONNECT carries only verbose/pedantic.
+
+        config TINYBLOK_NATS_AUTH_USERPASS
+            bool "Username + password"
+            help
+                Send user / pass fields in CONNECT. Plaintext over the
+                wire unless TLS is also enabled.
+
+        config TINYBLOK_NATS_AUTH_CREDS
+            bool "NATS .creds file (JWT + NKey seed)"
+            select TINYBLOK_NATS_TLS
+            help
+                Embed a NATS .creds file at build time. Sends the user
+                JWT and a signature of the server's nonce, signed with
+                the seed's Ed25519 key.
+
+                Creds auth force-enables TLS — sending a JWT over
+                plaintext defeats the point.
+
+                The .creds file is read from secrets/nats.creds at build
+                time. A nats.creds.example is checked in; the real file
+                is gitignored.
+    endchoice
+
+    config TINYBLOK_NATS_USER
+        string "NATS username"
+        depends on TINYBLOK_NATS_AUTH_USERPASS
+        default ""
+
+    config TINYBLOK_NATS_PASS
+        string "NATS password"
+        depends on TINYBLOK_NATS_AUTH_USERPASS
+        default ""
+
+    config TINYBLOK_NATS_CREDS_FILE
+        string "Path to .creds file (relative to project root)"
+        depends on TINYBLOK_NATS_AUTH_CREDS
+        default "secrets/nats.creds"
+        help
+            Path is resolved against the project root (the directory
+            containing the top-level CMakeLists.txt). The file is
+            embedded into the firmware image at build time.
+
 endmenu

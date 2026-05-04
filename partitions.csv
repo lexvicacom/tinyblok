@@ -1,0 +1,9 @@
+# Custom partition table for tinyblok.
+# 4 MB flash: bootloader at 0x0, partition table at 0x8000, NVS, PHY init,
+# then a 2 MB factory app slot. TLS + mbedTLS bumps the binary past the
+# 1 MB default; 2 MB leaves room for further growth (Zig patchbay port).
+#
+# Name,   Type, SubType,  Offset,   Size,    Flags
+nvs,      data, nvs,      0x9000,   0x6000,
+phy_init, data, phy,      0xf000,   0x1000,
+factory,  app,  factory,  0x10000,  0x200000,
