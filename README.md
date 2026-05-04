@@ -13,7 +13,7 @@ Status:
 
 ## Why codegen
 
-A small Python tool compiles the patchbay s-expression file into Zig ahead of build. Monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that's too much code and too much RAM, so on-device the rules become straight-line Zig with statically-allocated state slots. It's the same DSL implemented differently here; we now have two implementations though, so need to see if we can unify. That said, the forms are all quite simple.
+A small Python tool compiles the patchbay s-expression file into Zig ahead of build. Monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that's too much code and too much RAM, so on-device the rules become straight-line Zig with statically-allocated state slots. The op kernels themselves (squelch, deadband, moving-*, edges, bars, …) live in a shared kernel that both monoblok and tinyblok call into, so the DSL has one implementation and the codegen step is just wiring.
 
 ## TX ring
 
