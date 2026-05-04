@@ -24,7 +24,7 @@ Only polled drivers exist today. Push-style drivers (GPIO ISRs, UART RX) are not
 
 ## TX ring
 
-A ring buffer sits between rule eval and the NATS socket. `publish!` enqueues a record (subject borrowed by pointer with payload inline); the loop drains it via non-blocking `send()` once per tick. A slow broker or Wi-Fi retransmit burst drops the oldest queued samples rather than stalling the rule loop, so when the broker comes back it gets a catch-up burst of recent data instead of stale history. Default capacity is 8 KB ≈ 256 messages at typical payload sizes; this is configurable.
+A ring buffer sits between rule eval and the NATS socket. `publish!` enqueues a record (subject borrowed by pointer with payload inline); the loop drains it via non-blocking `send()` once per tick. A slow broker or Wi-Fi retransmit burst drops the oldest queued samples rather than stalling the rule loop, so when the broker comes back it gets a catch-up burst of recent data instead of stale history. Default capacity is 8 KB so ~256 messages at typical payload sizes; this is configurable.
 
 A lot of the time old messages have no value and can just be dropped, which is what the ring already does. In contexts where signal is spotty and old messages have value in spite of their age, such as a remote sensor where every reading matters and the link is flaky for hours at a time, a future option is to spool overflow records to LittleFS on flash so a long outage can be flushed when the broker returns.
 
