@@ -1,6 +1,6 @@
 # tinyblok
 
-ESP-IDF project that links a Zig static library, as groundwork for one day linking the patchbay from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) on-device and shipping sensor data back to a NATS cluster (or monoblok) over TCP. [Read the introductory blog post](https://alexjreid.dev/posts/tinyblok/)
+ESP-IDF project uses the patchbay DSL from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) on a MCU dev board, shipping sensor data back to a NATS cluster (or monoblok) over TCP. [Read the introductory blog post](https://alexjreid.dev/posts/tinyblok/)
 
 ## Status
 - Connects to wifi (run make menuconfig to setup)
@@ -10,10 +10,9 @@ ESP-IDF project that links a Zig static library, as groundwork for one day linki
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
-
 ## Why codegen
 
-A small Python tool compiles the patchbay s-expression file into Zig ahead of build. Monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that's too much code and too much RAM, so on-device the rules become straight-line Zig with statically-allocated state slots. The op kernels themselves (squelch, deadband, moving-*, edges, bars, …) live in a shared kernel that both monoblok and tinyblok call into, so the DSL has one implementation and the codegen step is just wiring.
+A small Python tool compiles the patchbay s-expression file into Zig ahead of build. While monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that is not feasible, so on-device the rules become straight-line Zig with statically-allocated state slots. The op kernels themselves (squelch, deadband, moving-*, edges, bars, …) live in a shared kernel that both monoblok and tinyblok call into, so the DSL has one implementation and the codegen step is just wiring things at build (comp!?) time. Using `comptime` was too hard for me at this stage but I actually think Python is fine here.
 
 ## Drivers
 
