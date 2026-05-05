@@ -5,6 +5,7 @@ ESP-IDF project uses the patchbay DSL from [lexvicacom/monoblok](https://github.
 ## Status
 - Connects to wifi (run make menuconfig to setup)
 - Connects to a NATS broker over TCP (host/port config also in menuconfig under "tinyblok")
+- TLS and `.creds` (NATS user JWT/nkey) support added, configurable in `make menuconfig`
 - Run make build flash and then make monitor if you want to connect and run
 - emits to a handful of `tinyblock.>` subjects on specified broker, see the [patchbay.edn](./patchbay.edn)
 
