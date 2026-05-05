@@ -115,8 +115,10 @@ def _parse_one(t, it: Iterator) -> Node:
 @dataclass
 class Slot:
     name: str
-    kind: str  # deadband | squelch | moving_avg_tick | rising_edge | falling_edge | throttle_ms
+    kind: str  # deadband | squelch | moving_avg_tick | rising_edge | falling_edge | throttle_ms | bar_tick | bar_time
     arg: float
+    # bar slots: subject prefix used for the four .bar.{open,high,low,close} emits.
+    subject: str = ""
 
 
 @dataclass
@@ -157,9 +159,9 @@ class Emitter:
     def slot_name(self, prefix: str, idx: int) -> str:
         return f"rule{self.rule_idx}_{prefix}{idx}"
 
-    def add_slot(self, kind: str, prefix: str, arg: float) -> str:
+    def add_slot(self, kind: str, prefix: str, arg: float, subject: str = "") -> str:
         name = self.slot_name(prefix, len(self.slots))
-        self.slots.append(Slot(name=name, kind=kind, arg=arg))
+        self.slots.append(Slot(name=name, kind=kind, arg=arg, subject=subject))
         return name
 
     def add_pump(self, list_node: list) -> None:
@@ -224,6 +226,8 @@ class Emitter:
             # Bare top-level publish republishes the original payload bytes.
             # Inside `->`, value_var carries the transformed float instead.
             self._emit_terminal_publish(out, lst, None, raw_payload=True)
+        elif head in ("count!", "count"):
+            self._emit_terminal_count(out, lst, value_var=None)
         else:
             raise SyntaxError(f"unknown rule form: {head}")
 
@@ -254,6 +258,20 @@ class Emitter:
                 self._emit_terminal_publish(out, op_list, vv, raw_payload=False)
                 continue
 
+            if op_head in ("bar!", "bar"):
+                if not last:
+                    raise SyntaxError("bar! must be last in ->")
+                if post_edge:
+                    raise SyntaxError("bar! cannot follow rising-edge / falling-edge")
+                self._emit_terminal_bar(out, op_list, current_var)
+                continue
+
+            if op_head in ("count!", "count"):
+                if not last:
+                    raise SyntaxError("count! must be last in ->")
+                self._emit_terminal_count(out, op_list, current_var)
+                continue
+
             next_var = current_var + 1
             out.append(f"        const __v{next_var}")
             self._emit_op(out, op_list, current_var)
@@ -277,19 +295,36 @@ class Emitter:
                 out.append(
                     f": f64 = state.{slot}.update(__v{in_var}) orelse break :blk;\n"
                 )
-            case "moving-avg":
-                # (moving-avg N) tick window or (moving-avg :ms N) approximated at 10 Hz.
+            case "moving-avg" | "moving-sum" | "moving-max" | "moving-min":
+                # (moving-* N) tick window or (moving-* :ms N) approximated at 10 Hz.
                 first = op_list[1]
                 if isinstance(first, Kw):
                     if first != "ms":
-                        raise SyntaxError("moving-avg keyword must be :ms")
+                        raise SyntaxError(f"{head} keyword must be :ms")
                     if len(op_list) < 3:
-                        raise SyntaxError("moving-avg :ms needs N")
+                        raise SyntaxError(f"{head} :ms needs N")
                     samples = _expect_num(op_list[2]) / 100.0
                 else:
                     samples = _expect_num(first)
-                slot = self.add_slot("moving_avg_tick", "ma", samples)
+                kind, prefix = {
+                    "moving-avg": ("moving_avg_tick", "ma"),
+                    "moving-sum": ("moving_sum_tick", "ms"),
+                    "moving-max": ("moving_max_tick", "mx"),
+                    "moving-min": ("moving_min_tick", "mn"),
+                }[head]
+                slot = self.add_slot(kind, prefix, samples)
                 out.append(f": f64 = state.{slot}.update(__v{in_var});\n")
+            case "quantize":
+                step = _expect_num(op_list[1])
+                if step == 0:
+                    raise SyntaxError("quantize STEP must be non-zero")
+                out.append(f": f64 = pb.quantize({_zig_num(step)}, __v{in_var});\n")
+            case "clamp":
+                lo = _expect_num(op_list[1])
+                hi = _expect_num(op_list[2])
+                if lo > hi:
+                    raise SyntaxError("clamp LO must be <= HI")
+                out.append(f": f64 = pb.clamp({_zig_num(lo)}, {_zig_num(hi)}, __v{in_var});\n")
             case "throttle":
                 ms = _expect_kwd_num(op_list[1:], "ms")
                 slot = self.add_slot("throttle_ms", "th", ms * 1000.0)
@@ -369,6 +404,50 @@ class Emitter:
             else:
                 out.append(f'        pb.emit({target_zig}, "1");\n')
 
+    def _emit_terminal_bar(self, out: list[str], op_list: list, value_var: int) -> None:
+        if len(op_list) < 2:
+            raise SyntaxError("bar! needs window spec")
+        first = op_list[1]
+        subject_prefix = self.current_filter
+        if isinstance(first, Kw):
+            if first != "ms":
+                raise SyntaxError("bar! keyword must be :ms")
+            if len(op_list) < 3:
+                raise SyntaxError("bar! :ms needs N")
+            window_ms = int(_expect_num(op_list[2]))
+            if window_ms <= 0:
+                raise SyntaxError("bar! :ms N must be positive")
+            slot = self.add_slot("bar_time", "bt", float(window_ms), subject=subject_prefix)
+        else:
+            cap = int(_expect_num(first))
+            if cap <= 0:
+                raise SyntaxError("bar! N must be positive")
+            slot = self.add_slot("bar_tick", "bk", float(cap), subject=subject_prefix)
+
+        last_slot = self.slots[-1]
+        is_time = last_slot.kind == "bar_time"
+        update_call = (
+            f"state.{slot}.timeUpdate(tinyblok_now_ms(), __v{value_var})"
+            if is_time
+            else f"state.{slot}.tickUpdate(__v{value_var})"
+        )
+        out.append(f"        if ({update_call}) |__c| {{\n")
+        for f in ("open", "high", "low", "close"):
+            out.append(
+                f'            pb.emitFloat("{subject_prefix}.bar.{f}", __c.{f}, 6);\n'
+            )
+        out.append("        }\n")
+
+    def _emit_terminal_count(self, out: list[str], op_list: list, value_var: int | None) -> None:
+        if len(op_list) > 1:
+            raise SyntaxError("count! takes no args (use (when COND ... (count!)) for conditional)")
+        _ = value_var
+        slot = self.add_slot("count", "ct", 0, subject=self.current_filter)
+        # update(true) always returns the new total; non-null guaranteed.
+        out.append(f"        if (state.{slot}.update(true)) |__n| {{\n")
+        out.append(f'            pb.emitInt("{self.current_filter}.count", @intCast(__n));\n')
+        out.append("        }\n")
+
     def _emit_when(self, out: list[str], lst: list) -> None:
         if len(lst) < 3:
             raise SyntaxError("(when COND BODY...) needs cond and body")
@@ -391,6 +470,7 @@ class Emitter:
             "extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;\n"
             "extern fn vTaskDelay(ticks: u32) void;\n"
             "extern fn tinyblok_uptime_us() u64;\n"
+            "extern fn tinyblok_now_ms() i64;\n"
             "extern fn strtod(nptr: [*:0]const u8, endptr: ?*[*:0]const u8) f64;\n"
         )
         # Externs declared by pumps. Skip duplicates (a pump :from may collide
@@ -417,6 +497,18 @@ class Emitter:
                     out.append(
                         f"    {slot.name}: pb.MovingAvg({int(slot.arg)}) = .{{}},\n"
                     )
+                case "moving_sum_tick":
+                    out.append(
+                        f"    {slot.name}: pb.MovingSum({int(slot.arg)}) = .{{}},\n"
+                    )
+                case "moving_max_tick":
+                    out.append(
+                        f"    {slot.name}: pb.MovingMax({int(slot.arg)}) = .{{}},\n"
+                    )
+                case "moving_min_tick":
+                    out.append(
+                        f"    {slot.name}: pb.MovingMin({int(slot.arg)}) = .{{}},\n"
+                    )
                 case "rising_edge":
                     out.append(f"    {slot.name}: pb.RisingEdge = .{{}},\n")
                 case "falling_edge":
@@ -425,6 +517,16 @@ class Emitter:
                     out.append(
                         f"    {slot.name}: pb.Throttle = .{{ .interval_us = {int(slot.arg)} }},\n"
                     )
+                case "bar_tick":
+                    out.append(
+                        f"    {slot.name}: pb.Bar = .{{ .cap = {int(slot.arg)} }},\n"
+                    )
+                case "bar_time":
+                    out.append(
+                        f"    {slot.name}: pb.Bar = .{{ .window_ms = {int(slot.arg)} }},\n"
+                    )
+                case "count":
+                    out.append(f"    {slot.name}: pb.Count = .{{}},\n")
 
         out.append("};\n" "\n" "var state: State = .{};\n" "\n")
 
@@ -498,6 +600,25 @@ class Emitter:
 
         if self.pumps:
             out.append(self._render_collect())
+        out.append(self._render_bar_walker())
+        return "".join(out)
+
+    def _render_bar_walker(self) -> str:
+        time_bars = [s for s in self.slots if s.kind == "bar_time"]
+        out: list[str] = []
+        out.append("\nexport fn tinyblok_bar_tick_clocks() callconv(.c) void {\n")
+        if not time_bars:
+            out.append("}\n")
+            return "".join(out)
+        out.append("    const now_ms: i64 = tinyblok_now_ms();\n")
+        for slot in time_bars:
+            out.append(f"    if (state.{slot.name}.timeTick(now_ms)) |__c| {{\n")
+            for f in ("open", "high", "low", "close"):
+                out.append(
+                    f'        pb.emitFloat("{slot.subject}.bar.{f}", __c.{f}, 6);\n'
+                )
+            out.append("    }\n")
+        out.append("}\n")
         return "".join(out)
 
     def _render_collect(self) -> str:

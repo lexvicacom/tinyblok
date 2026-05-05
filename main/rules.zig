@@ -7,6 +7,7 @@ const pb = @import("patchbay.zig");
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 extern fn vTaskDelay(ticks: u32) void;
 extern fn tinyblok_uptime_us() u64;
+extern fn tinyblok_now_ms() i64;
 extern fn strtod(nptr: [*:0]const u8, endptr: ?*[*:0]const u8) f64;
 extern fn tinyblok_free_heap() u32;
 extern fn tinyblok_wifi_rssi() c_int;
@@ -22,6 +23,11 @@ const State = struct {
     rule6_th6: pb.Throttle = .{ .interval_us = 60000000 },
     rule7_ma7: pb.MovingAvg(30) = .{},
     rule8_re8: pb.RisingEdge = .{},
+    rule11_bk9: pb.Bar = .{ .cap = 10 },
+    rule12_bt10: pb.Bar = .{ .window_ms = 60000 },
+    rule13_mx11: pb.MovingMax(30) = .{},
+    rule14_mn12: pb.MovingMin(30) = .{},
+    rule17_ct13: pb.Count = .{},
 };
 
 var state: State = .{};
@@ -38,6 +44,20 @@ fn onHeap(payload_float: f64, payload_raw: []const u8, depth: u8) void {
         const __v1: f64 = state.rule1_ma1.update(__v0);
         const __v2: f64 = @round(__v1);
         pb.emitFloat("tinyblok.heap.avg1s", __v2, 6);
+    }
+    {
+        const __v0: f64 = payload_float;
+        if (state.rule12_bt10.timeUpdate(tinyblok_now_ms(), __v0)) |__c| {
+            pb.emitFloat("tinyblok.heap.bar.open", __c.open, 6);
+            pb.emitFloat("tinyblok.heap.bar.high", __c.high, 6);
+            pb.emitFloat("tinyblok.heap.bar.low", __c.low, 6);
+            pb.emitFloat("tinyblok.heap.bar.close", __c.close, 6);
+        }
+    }
+    {
+        const __v0: f64 = payload_float;
+        const __v1: f64 = pb.quantize(4096, __v0);
+        pb.emitFloat("tinyblok.heap.bucket", __v1, 6);
     }
 }
 
@@ -80,6 +100,13 @@ fn onRssi(payload_float: f64, payload_raw: []const u8, depth: u8) void {
         pb.emit("tinyblok.alert.rssi.weak", "1");
     }
     }
+    if (!((payload_float == @as(f64, 0)))) {
+    {
+        const __v0: f64 = payload_float;
+        const __v1: f64 = pb.clamp(-100, 0, __v0);
+        pb.emitFloat("tinyblok.rssi.clamped", __v1, 6);
+    }
+    }
 }
 
 fn onUptime(payload_float: f64, payload_raw: []const u8, depth: u8) void {
@@ -110,6 +137,30 @@ fn onTemp(payload_float: f64, payload_raw: []const u8, depth: u8) void {
     }
     }
         pb.emit("tinyblok.temp.raw", payload_raw);
+    {
+        const __v0: f64 = payload_float;
+        if (state.rule11_bk9.tickUpdate(__v0)) |__c| {
+            pb.emitFloat("tinyblok.temp.bar.open", __c.open, 6);
+            pb.emitFloat("tinyblok.temp.bar.high", __c.high, 6);
+            pb.emitFloat("tinyblok.temp.bar.low", __c.low, 6);
+            pb.emitFloat("tinyblok.temp.bar.close", __c.close, 6);
+        }
+    }
+    {
+        const __v0: f64 = payload_float;
+        const __v1: f64 = state.rule13_mx11.update(__v0);
+        const __v2: f64 = @round(__v1 * 10) / 10;
+        pb.emitFloat("tinyblok.temp.max30s", __v2, 6);
+    }
+    {
+        const __v0: f64 = payload_float;
+        const __v1: f64 = state.rule14_mn12.update(__v0);
+        const __v2: f64 = @round(__v1 * 10) / 10;
+        pb.emitFloat("tinyblok.temp.min30s", __v2, 6);
+    }
+        if (state.rule17_ct13.update(true)) |__n| {
+            pb.emitInt("tinyblok.temp.count", @intCast(__n));
+        }
 }
 
 fn onAlex(payload_float: f64, payload_raw: []const u8, depth: u8) void {
@@ -205,3 +256,13 @@ export const tinyblok_pumps: [4]Pump = .{
     .{ .subject = "tinyblok.uptime", .period_us = 100000, .fire = &tinyblok_pump_uptime },
     .{ .subject = "tinyblok.temp", .period_us = 1000000, .fire = &tinyblok_pump_temp },
 };
+
+export fn tinyblok_bar_tick_clocks() callconv(.c) void {
+    const now_ms: i64 = tinyblok_now_ms();
+    if (state.rule12_bt10.timeTick(now_ms)) |__c| {
+        pb.emitFloat("tinyblok.heap.bar.open", __c.open, 6);
+        pb.emitFloat("tinyblok.heap.bar.high", __c.high, 6);
+        pb.emitFloat("tinyblok.heap.bar.low", __c.low, 6);
+        pb.emitFloat("tinyblok.heap.bar.close", __c.close, 6);
+    }
+}

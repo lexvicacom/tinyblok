@@ -72,3 +72,35 @@
 ;; through %.6f. Useful for mirroring a feed to a debug subject.
 (on "tinyblok.temp"
   (publish! "tinyblok.temp.raw"))
+
+;; 10-sample tick OHLC over the temp feed; emits to
+;; tinyblok.temp.bar.{open,high,low,close} every 10 samples (= 10 s @ 1 Hz).
+(on "tinyblok.temp"
+  (-> payload-float (bar! 10)))
+
+;; 60-second wall-clock OHLC over heap; the bar walker closes idle windows.
+(on "tinyblok.heap"
+  (-> payload-float (bar! :ms 60000)))
+
+;; Rolling stats over the last 30 temp samples.
+(on "tinyblok.temp"
+  (-> payload-float (moving-max 30) (round 1)
+      (publish! (subject-append "max30s"))))
+
+(on "tinyblok.temp"
+  (-> payload-float (moving-min 30) (round 1)
+      (publish! (subject-append "min30s"))))
+
+;; Quantize heap to 4 KiB buckets, clamp absurd RSSI readings to a
+;; sensible range, and count temp samples seen.
+(on "tinyblok.heap"
+  (-> payload-float (quantize 4096)
+      (publish! (subject-append "bucket"))))
+
+(on "tinyblok.rssi"
+  (when (not (= payload-float 0))
+    (-> payload-float (clamp -100 0)
+        (publish! (subject-append "clamped")))))
+
+(on "tinyblok.temp"
+  (count!))

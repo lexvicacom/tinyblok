@@ -16,6 +16,13 @@ pub const Delta = kernel.Delta;
 pub const RisingEdge = kernel.RisingEdge;
 pub const FallingEdge = kernel.FallingEdge;
 pub const MovingAvg = kernel.MovingAvg;
+pub const MovingSum = kernel.MovingSum;
+pub const MovingMax = kernel.MovingMax;
+pub const MovingMin = kernel.MovingMin;
+pub const Bar = kernel.Bar;
+pub const Count = kernel.Count;
+pub const quantize = kernel.quantize;
+pub const clamp = kernel.clamp;
 
 // std.fmt pulls in __udivti3 which compiler-rt for riscv32-freestanding lacks.
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
