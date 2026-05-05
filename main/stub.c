@@ -17,7 +17,18 @@ extern void tinyblok_sources_init(void);
 static const char *TAG = "tinyblok";
 
 static EventGroupHandle_t wifi_events;
+static portMUX_TYPE tx_ring_mux = portMUX_INITIALIZER_UNLOCKED;
 #define WIFI_GOT_IP_BIT BIT0
+
+void tinyblok_tx_ring_lock(void)
+{
+    portENTER_CRITICAL(&tx_ring_mux);
+}
+
+void tinyblok_tx_ring_unlock(void)
+{
+    portEXIT_CRITICAL(&tx_ring_mux);
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {

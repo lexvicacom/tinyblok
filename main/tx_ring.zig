@@ -1,7 +1,8 @@
-// Single-producer, single-consumer ring of NATS PUB records, drained into the
-// non-blocking socket once per tick. Producer = rule eval on the loop thread
-// (via patchbay.emit). Consumer = same thread. No locks, no atomics —
-// single-threaded by construction.
+// Ring of NATS PUB records shared by two FreeRTOS tasks: generated pump/event
+// handlers enqueue from the default esp_event task, while zig_main drains from
+// the main task. Ring metadata is protected by tinyblok_tx_ring_{lock,unlock};
+// drain copies one head record while locked, sends it without the lock, then
+// re-locks to commit progress.
 //
 // We store records, not framed bytes. Each record is:
 //
@@ -24,6 +25,8 @@
 // "slack" — accounted for separately so used_bytes only counts real records.
 
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
+extern fn tinyblok_tx_ring_lock() callconv(.c) void;
+extern fn tinyblok_tx_ring_unlock() callconv(.c) void;
 
 pub const RING_CAP: usize = 8192;
 pub const SUBJ_MAX: usize = 64;
@@ -40,10 +43,13 @@ var slack_at_end: usize = 0; // unused tail region created by wrap-around
 // Bytes of the current head record already pushed to the socket. Non-zero
 // means the head record is pinned (eviction would corrupt the wire stream).
 var record_bytes_sent: usize = 0;
+var drain_pinned: bool = false;
 
 pub var dropped: u32 = 0;
 
 pub fn used() usize {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
     return used_bytes;
 }
 
@@ -52,22 +58,34 @@ pub fn capacity() usize {
 }
 
 export fn tinyblok_tx_ring_used() callconv(.c) usize {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
     return used_bytes;
 }
 
 export fn tinyblok_tx_ring_count() callconv(.c) usize {
-    return count();
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
+    return countLocked();
 }
 
 /// Caller (the NATS layer) invokes this after a socket teardown so the next
 /// drain restarts the head record from byte 0 instead of resuming mid-record
 /// into a fresh connection (which the broker would parse as garbage).
 export fn tinyblok_tx_ring_reset_in_flight() callconv(.c) void {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
     record_bytes_sent = 0;
 }
 
 /// Number of records currently buffered. Walks the ring; cheap (cap is 8 KiB).
 pub fn count() usize {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
+    return countLocked();
+}
+
+fn countLocked() usize {
     if (used_bytes == 0) return 0;
     var t = tail;
     var remaining = used_bytes;
@@ -103,6 +121,9 @@ fn freeContiguous() usize {
 /// Append a record. Evicts oldest records to make room if necessary.
 /// Only fails if the record itself is malformed or larger than RING_CAP.
 pub fn enqueue(subject: []const u8, payload: []const u8) bool {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
+
     if (subject.len == 0 or subject.len > SUBJ_MAX) {
         dropped += 1;
         return false;
@@ -190,8 +211,9 @@ fn evictOne() bool {
         if (used_bytes == 0) return true;
     }
 
-    // The tail record is the head of the FIFO; if it's mid-send, it's pinned.
-    if (record_bytes_sent > 0) return false;
+    // The tail record is the head of the FIFO; if drain has copied it or sent
+    // part of it, it is pinned until drain commits progress.
+    if (drain_pinned or record_bytes_sent > 0) return false;
 
     const subj_len = readU16(tail);
     const pl_len = readU16(tail + 2);
@@ -234,65 +256,128 @@ inline fn readU16(off: usize) u16 {
 
 pub const TrySendFn = *const fn (data: [*]const u8, data_len: usize) callconv(.c) isize;
 
+const DrainRecord = struct {
+    subject: [SUBJ_MAX]u8 = undefined,
+    payload: [PAYLOAD_MAX]u8 = undefined,
+    subject_len: usize = 0,
+    payload_len: usize = 0,
+    rec_size: usize = 0,
+    sent: usize = 0,
+};
+
+const SendStatus = enum { complete, blocked, err };
+
 /// Drain records into the socket. Stops on EAGAIN (try_send returns 0) or
 /// error (negative). Resumes mid-record via record_bytes_sent.
 pub fn drain(try_send: TrySendFn) void {
-    while (used_bytes > 0) {
-        if (slack_at_end > 0 and tail == RING_CAP - slack_at_end) {
-            tail = 0;
-            slack_at_end = 0;
-            if (used_bytes == 0) return;
-        }
+    while (true) {
+        var rec: DrainRecord = undefined;
 
-        const subj_len = readU16(tail);
-        const pl_len = readU16(tail + 2);
-        const subj_off = tail + HEADER_BYTES;
-        const subject = buf[subj_off..][0..subj_len];
-        const payload_off = subj_off + subj_len;
-        const payload = buf[payload_off..][0..pl_len];
-        const rec_size = HEADER_BYTES + subj_len + pl_len;
+        tinyblok_tx_ring_lock();
+        if (!copyHeadForDrain(&rec)) {
+            tinyblok_tx_ring_unlock();
+            return;
+        }
+        tinyblok_tx_ring_unlock();
 
         var hdr: [SUBJ_MAX + 32]u8 = undefined;
-        const hdr_n = snprintf(&hdr, hdr.len, "PUB %.*s %u\r\n", @as(c_int, @intCast(subj_len)), subject.ptr, @as(c_uint, @intCast(pl_len)));
+        const subject = rec.subject[0..rec.subject_len];
+        const payload = rec.payload[0..rec.payload_len];
+        const hdr_n = snprintf(&hdr, hdr.len, "PUB %.*s %u\r\n", @as(c_int, @intCast(rec.subject_len)), subject.ptr, @as(c_uint, @intCast(rec.payload_len)));
         if (hdr_n <= 0) {
-            advance(rec_size);
+            tinyblok_tx_ring_lock();
+            advance(rec.rec_size);
             record_bytes_sent = 0;
+            drain_pinned = false;
+            tinyblok_tx_ring_unlock();
             continue;
         }
         const hdr_len: usize = @min(@as(usize, @intCast(hdr_n)), hdr.len);
 
-        var sent = record_bytes_sent;
-        const ok = sendSegment(try_send, hdr[0..hdr_len], &sent, 0) and
-            sendSegment(try_send, payload, &sent, hdr_len) and
-            sendSegment(try_send, "\r\n", &sent, hdr_len + pl_len);
+        var sent = rec.sent;
+        var status = sendSegment(try_send, hdr[0..hdr_len], &sent, 0);
+        if (status == .complete) status = sendSegment(try_send, payload, &sent, hdr_len);
+        if (status == .complete) status = sendSegment(try_send, "\r\n", &sent, hdr_len + rec.payload_len);
 
-        if (!ok) {
-            record_bytes_sent = sent;
-            return;
+        tinyblok_tx_ring_lock();
+        drain_pinned = false;
+        switch (status) {
+            .complete => {
+                advance(rec.rec_size);
+                record_bytes_sent = 0;
+            },
+            .blocked => {
+                record_bytes_sent = sent;
+                tinyblok_tx_ring_unlock();
+                return;
+            },
+            .err => {
+                record_bytes_sent = 0;
+                tinyblok_tx_ring_unlock();
+                return;
+            },
         }
+        tinyblok_tx_ring_unlock();
+    }
+}
 
-        advance(rec_size);
+fn copyHeadForDrain(out: *DrainRecord) bool {
+    if (used_bytes == 0) return false;
+    normalizeTailSlack();
+    if (used_bytes == 0) return false;
+
+    const subj_len = readU16(tail);
+    const pl_len = readU16(tail + 2);
+    const rec_size = HEADER_BYTES + subj_len + pl_len;
+
+    if (subj_len > SUBJ_MAX or pl_len > PAYLOAD_MAX or rec_size > used_bytes) {
+        dropped += 1;
+        advance(@min(rec_size, used_bytes));
         record_bytes_sent = 0;
+        drain_pinned = false;
+        return false;
+    }
+
+    const subj_off = tail + HEADER_BYTES;
+    const payload_off = subj_off + subj_len;
+    @memcpy(out.subject[0..subj_len], buf[subj_off..][0..subj_len]);
+    @memcpy(out.payload[0..pl_len], buf[payload_off..][0..pl_len]);
+    out.subject_len = subj_len;
+    out.payload_len = pl_len;
+    out.rec_size = rec_size;
+    out.sent = record_bytes_sent;
+    drain_pinned = true;
+    return true;
+}
+
+fn normalizeTailSlack() void {
+    if (slack_at_end > 0 and tail == RING_CAP - slack_at_end) {
+        tail = 0;
+        slack_at_end = 0;
     }
 }
 
 /// Send `slice` accounting for `sent.*` bytes already pushed across the whole
-/// record's wire form. Returns false on EAGAIN/error so caller can persist `sent`.
-fn sendSegment(try_send: TrySendFn, slice: []const u8, sent: *usize, slice_start: usize) bool {
-    if (slice.len == 0) return true;
-    if (sent.* >= slice_start + slice.len) return true;
+/// record's wire form.
+fn sendSegment(try_send: TrySendFn, slice: []const u8, sent: *usize, slice_start: usize) SendStatus {
+    if (slice.len == 0) return .complete;
+    if (sent.* >= slice_start + slice.len) return .complete;
     const skip = if (sent.* > slice_start) sent.* - slice_start else 0;
     var off: usize = skip;
     while (off < slice.len) {
         const n = try_send(slice.ptr + off, slice.len - off);
-        if (n <= 0) {
+        if (n < 0) {
             sent.* = slice_start + off;
-            return false;
+            return .err;
+        }
+        if (n == 0) {
+            sent.* = slice_start + off;
+            return .blocked;
         }
         off += @intCast(n);
     }
     sent.* = slice_start + slice.len;
-    return true;
+    return .complete;
 }
 
 fn advance(n: usize) void {
