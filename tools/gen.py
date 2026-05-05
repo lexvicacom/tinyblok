@@ -437,6 +437,28 @@ class Emitter:
                 f'            pb.emitFloat("{subject_prefix}.bar.{f}", __c.{f}, 6);\n'
             )
         out.append("        }\n")
+        # Time bars: after every push, (re)arm the per-slot one-shot timer at
+        # `nextDeadlineMs`. This lands the close at the exact window boundary
+        # even if the feed goes quiet, and replaces the periodic walker.
+        if is_time:
+            slot_id = self._bar_time_slot_id(slot)
+            out.append(
+                f"        if (state.{slot}.nextDeadlineMs()) |__dl| {{\n"
+                f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                f"        }}\n"
+            )
+
+    def _bar_time_slot_id(self, slot_name: str) -> int:
+        """Return the dense u32 slot id for a `bar_time` slot, in declaration
+        order. Used to index the per-slot clock table on the C side."""
+        idx = 0
+        for s in self.slots:
+            if s.kind != "bar_time":
+                continue
+            if s.name == slot_name:
+                return idx
+            idx += 1
+        raise KeyError(f"bar_time slot {slot_name} not found")
 
     def _emit_terminal_count(self, out: list[str], op_list: list, value_var: int | None) -> None:
         if len(op_list) > 1:
@@ -600,25 +622,62 @@ class Emitter:
 
         if self.pumps:
             out.append(self._render_collect())
-        out.append(self._render_bar_walker())
+        out.append(self._render_clocks())
         return "".join(out)
 
-    def _render_bar_walker(self) -> str:
+    def _render_clocks(self) -> str:
+        """Generate the per-time-bar fire functions plus the C-visible
+        clock-slot table. Each fire fn runs `Bar.timeTick`, emits the close
+        if the window elapsed, and re-arms the slot's one-shot timer at
+        the next deadline. The C side (drivers.c) creates one
+        `esp_timer_handle_t` per entry in `tinyblok_clock_slots[]` and
+        dispatches its callback into the matching `fire`."""
         time_bars = [s for s in self.slots if s.kind == "bar_time"]
         out: list[str] = []
-        out.append("\nexport fn tinyblok_bar_tick_clocks() callconv(.c) void {\n")
-        if not time_bars:
-            out.append("}\n")
-            return "".join(out)
-        out.append("    const now_ms: i64 = tinyblok_now_ms();\n")
+        # Always emit the helper + extern + table so the C side has a stable
+        # symbol surface, even when there are zero time bars.
+        out.append(
+            "\nextern fn tinyblok_clock_arm(slot_id: usize, us_until: u64) void;\n"
+            "\n"
+            "fn deadlineUsFromNow(deadline_ms: i64) u64 {\n"
+            "    const now_ms = tinyblok_now_ms();\n"
+            "    const diff = deadline_ms - now_ms;\n"
+            "    if (diff <= 0) return 0;\n"
+            "    return @as(u64, @intCast(diff)) * 1000;\n"
+            "}\n"
+        )
         for slot in time_bars:
-            out.append(f"    if (state.{slot.name}.timeTick(now_ms)) |__c| {{\n")
+            out.append(
+                f"\nexport fn tinyblok_bar_{slot.name}_fire() callconv(.c) void {{\n"
+                f"    const now_ms: i64 = tinyblok_now_ms();\n"
+                f"    if (state.{slot.name}.timeTick(now_ms)) |__c| {{\n"
+            )
             for f in ("open", "high", "low", "close"):
                 out.append(
                     f'        pb.emitFloat("{slot.subject}.bar.{f}", __c.{f}, 6);\n'
                 )
-            out.append("    }\n")
-        out.append("}\n")
+            slot_id = self._bar_time_slot_id(slot.name)
+            out.append(
+                f"    }}\n"
+                f"    if (state.{slot.name}.nextDeadlineMs()) |__dl| {{\n"
+                f"        tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                f"    }}\n"
+                f"}}\n"
+            )
+        out.append(
+            "\npub const ClockSlot = extern struct {\n"
+            "    fire: *const fn () callconv(.c) void,\n"
+            "};\n"
+        )
+        out.append(f"\nexport const tinyblok_clock_slot_count: usize = {len(time_bars)};\n")
+        if time_bars:
+            out.append(f"export const tinyblok_clock_slots: [{len(time_bars)}]ClockSlot = .{{\n")
+            for slot in time_bars:
+                out.append(f"    .{{ .fire = &tinyblok_bar_{slot.name}_fire }},\n")
+            out.append("};\n")
+        else:
+            # Empty array: keep the symbol so drivers.c can link unconditionally.
+            out.append("export const tinyblok_clock_slots: [0]ClockSlot = .{};\n")
         return "".join(out)
 
     def _render_collect(self) -> str:

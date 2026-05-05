@@ -53,6 +53,9 @@ fn onHeap(payload_float: f64, payload_raw: []const u8, depth: u8) void {
             pb.emitFloat("tinyblok.heap.bar.low", __c.low, 6);
             pb.emitFloat("tinyblok.heap.bar.close", __c.close, 6);
         }
+        if (state.rule12_bt10.nextDeadlineMs()) |__dl| {
+            tinyblok_clock_arm(0, deadlineUsFromNow(__dl));
+        }
     }
     {
         const __v0: f64 = payload_float;
@@ -65,12 +68,12 @@ fn onHeap_stable(payload_float: f64, payload_raw: []const u8, depth: u8) void {
     _ = depth;
     _ = payload_raw;
     if ((payload_float < @as(f64, 20480))) {
-    blk: {
-        const __v0: f64 = payload_float;
-        const __v1: bool = state.rule2_re2.update(__v0 != 0);
-        if (!__v1) break :blk;
-        pb.emit("tinyblok.alert.heap.low", "1");
-    }
+        blk: {
+            const __v0: f64 = payload_float;
+            const __v1: bool = state.rule2_re2.update(__v0 != 0);
+            if (!__v1) break :blk;
+            pb.emit("tinyblok.alert.heap.low", "1");
+        }
     }
 }
 
@@ -78,34 +81,34 @@ fn onRssi(payload_float: f64, payload_raw: []const u8, depth: u8) void {
     _ = depth;
     _ = payload_raw;
     if (!((payload_float == @as(f64, 0)))) {
-    blk: {
-        const __v0: f64 = payload_float;
-        const __v1: f64 = state.rule3_db3.update(__v0) orelse break :blk;
-        pb.emitFloat("tinyblok.rssi.stable", __v1, 6);
-    }
+        blk: {
+            const __v0: f64 = payload_float;
+            const __v1: f64 = state.rule3_db3.update(__v0) orelse break :blk;
+            pb.emitFloat("tinyblok.rssi.stable", __v1, 6);
+        }
     }
     if (!((payload_float == @as(f64, 0)))) {
-    {
-        const __v0: f64 = payload_float;
-        const __v1: f64 = state.rule4_ma4.update(__v0);
-        const __v2: f64 = @round(__v1);
-        pb.emitFloat("tinyblok.rssi.avg5s", __v2, 6);
-    }
+        {
+            const __v0: f64 = payload_float;
+            const __v1: f64 = state.rule4_ma4.update(__v0);
+            const __v2: f64 = @round(__v1);
+            pb.emitFloat("tinyblok.rssi.avg5s", __v2, 6);
+        }
     }
     if ((!((payload_float == @as(f64, 0))) and (payload_float < @as(f64, -75)))) {
-    blk: {
-        const __v0: f64 = payload_float;
-        const __v1: bool = state.rule5_re5.update(__v0 != 0);
-        if (!__v1) break :blk;
-        pb.emit("tinyblok.alert.rssi.weak", "1");
-    }
+        blk: {
+            const __v0: f64 = payload_float;
+            const __v1: bool = state.rule5_re5.update(__v0 != 0);
+            if (!__v1) break :blk;
+            pb.emit("tinyblok.alert.rssi.weak", "1");
+        }
     }
     if (!((payload_float == @as(f64, 0)))) {
-    {
-        const __v0: f64 = payload_float;
-        const __v1: f64 = pb.clamp(-100, 0, __v0);
-        pb.emitFloat("tinyblok.rssi.clamped", __v1, 6);
-    }
+        {
+            const __v0: f64 = payload_float;
+            const __v1: f64 = pb.clamp(-100, 0, __v0);
+            pb.emitFloat("tinyblok.rssi.clamped", __v1, 6);
+        }
     }
 }
 
@@ -129,14 +132,14 @@ fn onTemp(payload_float: f64, payload_raw: []const u8, depth: u8) void {
         pb.emitFloat("tinyblok.temp.avg30s", __v2, 6);
     }
     if ((payload_float > @as(f64, 30))) {
-    blk: {
-        const __v0: f64 = payload_float;
-        const __v1: bool = state.rule8_re8.update(__v0 != 0);
-        if (!__v1) break :blk;
-        pb.emit("tinyblok.alert.temp.hot", "1");
+        blk: {
+            const __v0: f64 = payload_float;
+            const __v1: bool = state.rule8_re8.update(__v0 != 0);
+            if (!__v1) break :blk;
+            pb.emit("tinyblok.alert.temp.hot", "1");
+        }
     }
-    }
-        pb.emit("tinyblok.temp.raw", payload_raw);
+    pb.emit("tinyblok.temp.raw", payload_raw);
     {
         const __v0: f64 = payload_float;
         if (state.rule11_bk9.tickUpdate(__v0)) |__c| {
@@ -158,19 +161,19 @@ fn onTemp(payload_float: f64, payload_raw: []const u8, depth: u8) void {
         const __v2: f64 = @round(__v1 * 10) / 10;
         pb.emitFloat("tinyblok.temp.min30s", __v2, 6);
     }
-        if (state.rule17_ct13.update(true)) |__n| {
-            pb.emitInt("tinyblok.temp.count", @intCast(__n));
-        }
+    if (state.rule17_ct13.update(true)) |__n| {
+        pb.emitInt("tinyblok.temp.count", @intCast(__n));
+    }
 }
 
 fn onAlex(payload_float: f64, payload_raw: []const u8, depth: u8) void {
     _ = depth;
     _ = payload_raw;
     if ((payload_float == @as(f64, 42))) {
-    {
-        const __v0: f64 = @as(f64, 1);
-        pb.emitFloat("alex.alert", __v0, 6);
-    }
+        {
+            const __v0: f64 = @as(f64, 1);
+            pb.emitFloat("alex.alert", __v0, 6);
+        }
     }
 }
 
@@ -257,7 +260,16 @@ export const tinyblok_pumps: [4]Pump = .{
     .{ .subject = "tinyblok.temp", .period_us = 1000000, .fire = &tinyblok_pump_temp },
 };
 
-export fn tinyblok_bar_tick_clocks() callconv(.c) void {
+extern fn tinyblok_clock_arm(slot_id: usize, us_until: u64) void;
+
+fn deadlineUsFromNow(deadline_ms: i64) u64 {
+    const now_ms = tinyblok_now_ms();
+    const diff = deadline_ms - now_ms;
+    if (diff <= 0) return 0;
+    return @as(u64, @intCast(diff)) * 1000;
+}
+
+export fn tinyblok_bar_rule12_bt10_fire() callconv(.c) void {
     const now_ms: i64 = tinyblok_now_ms();
     if (state.rule12_bt10.timeTick(now_ms)) |__c| {
         pb.emitFloat("tinyblok.heap.bar.open", __c.open, 6);
@@ -265,4 +277,16 @@ export fn tinyblok_bar_tick_clocks() callconv(.c) void {
         pb.emitFloat("tinyblok.heap.bar.low", __c.low, 6);
         pb.emitFloat("tinyblok.heap.bar.close", __c.close, 6);
     }
+    if (state.rule12_bt10.nextDeadlineMs()) |__dl| {
+        tinyblok_clock_arm(0, deadlineUsFromNow(__dl));
+    }
 }
+
+pub const ClockSlot = extern struct {
+    fire: *const fn () callconv(.c) void,
+};
+
+export const tinyblok_clock_slot_count: usize = 1;
+export const tinyblok_clock_slots: [1]ClockSlot = .{
+    .{ .fire = &tinyblok_bar_rule12_bt10_fire },
+};
