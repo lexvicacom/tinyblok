@@ -1,11 +1,6 @@
-// Each generated pump becomes one esp_timer that posts an event
-// onto a private esp_event base. A single handler indexes into the pump table
-// (defined in rules.zig) and calls the pump's fire() into Zig. Sample reads,
-// formatting, and rule evaluation happen on the esp_event task; the main loop
-// only handles network drain.
-//
-// Push drivers (GPIO ISR, UART RX) will register their own event_ids on the
-// same base later — they call esp_event_isr_post and reuse this handler shape.
+// Each generated pump arms one esp_timer that posts to TINYBLOK_EVENTS.
+// on_pump_event runs on the esp_event task and calls into the Zig-side
+// pump table; the main loop only services network I/O.
 
 #include <stdint.h>
 #include <stddef.h>

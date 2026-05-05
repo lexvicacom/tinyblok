@@ -67,8 +67,7 @@ static void wifi_connect_blocking(void)
 
 void app_main(void)
 {
-    // NVS required by esp_wifi for calibration data even when creds come from menuconfig.
-    // TODO try out the app pairing feature which is pretty neat
+    // NVS is required by esp_wifi for calibration data.
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {

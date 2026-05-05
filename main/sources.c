@@ -12,7 +12,6 @@ static temperature_sensor_handle_t tsens;
 
 void tinyblok_sources_init(void)
 {
-    // for temp sens
     temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     temperature_sensor_install(&cfg, &tsens);
     temperature_sensor_enable(tsens);

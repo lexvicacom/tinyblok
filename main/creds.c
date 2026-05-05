@@ -1,8 +1,5 @@
 // Parser for NATS .creds files (JWT block + NKey-seed block) and the
 // Ed25519 nonce-signing primitive that goes with them.
-//
-// Compile-conditional on TINYBLOK_NATS_AUTH_CREDS — registered as a source
-// in main/CMakeLists.txt only in that branch.
 #include "creds.h"
 
 #include <stdint.h>
@@ -28,11 +25,10 @@ static tinyblok_creds_t g_creds;
 static char g_jwt_buf[2048];
 static int g_loaded = 0;
 
-// ---------------------------------------------------------------- block scan
+static int is_ws(char c) { return c == '\r' || c == '\n' || c == ' ' || c == '\t'; }
 
-// Find the line(s) between "-----BEGIN <label>-----" and the next "-----END"
-// marker. Returns 0 on success and writes start+len of the inner content
-// (whitespace-trimmed). Returns -1 if the markers are missing.
+// Find the body between "-----BEGIN <label>-----" and the next "-----END"
+// marker, whitespace-trimmed. Returns -1 if either marker is missing.
 static int extract_block(const char *haystack, size_t haystack_len,
                          const char *label, const char **out_start,
                          size_t *out_len)
@@ -48,9 +44,8 @@ static int extract_block(const char *haystack, size_t haystack_len,
     const char *body = begin + n;
     size_t remaining = haystack_len - (size_t)(body - haystack);
 
-    // The end marker varies in dash count between tools (nsc emits 6 dashes,
-    // the spec example uses 5). Match the longer form first so we don't
-    // stop one byte inside a 6-dash sentinel and leave a stray '-' in body.
+    // nsc emits 6 dashes, the spec example uses 5; match the longer form
+    // first so we don't stop one byte inside a 6-dash sentinel.
     const char *end = memmem(body, remaining, "------END", 9);
     if (!end)
     {
@@ -59,10 +54,10 @@ static int extract_block(const char *haystack, size_t haystack_len,
             return -1;
     }
 
-    while (body < end && (*body == '\r' || *body == '\n' || *body == ' ' || *body == '\t'))
+    while (body < end && is_ws(*body))
         body++;
     const char *tail = end;
-    while (tail > body && (tail[-1] == '\r' || tail[-1] == '\n' || tail[-1] == ' ' || tail[-1] == '\t'))
+    while (tail > body && is_ws(tail[-1]))
         tail--;
 
     *out_start = body;
@@ -70,10 +65,8 @@ static int extract_block(const char *haystack, size_t haystack_len,
     return 0;
 }
 
-// ---------------------------------------------------------------- base32
-
-// RFC 4648 base32 alphabet, no padding. Input may contain whitespace; we skip it.
-// Returns number of decoded bytes, or -1 on bad character / length.
+// RFC 4648 base32, no padding. Whitespace and '=' are skipped.
+// Returns number of decoded bytes, or -1 on bad character / overflow.
 static int base32_decode(const char *in, size_t in_len, unsigned char *out, size_t out_cap)
 {
     uint32_t buf = 0;
@@ -82,7 +75,7 @@ static int base32_decode(const char *in, size_t in_len, unsigned char *out, size
     for (size_t i = 0; i < in_len; i++)
     {
         char c = in[i];
-        if (c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '=')
+        if (is_ws(c) || c == '=')
             continue;
         int v;
         if (c >= 'A' && c <= 'Z')
@@ -150,8 +143,6 @@ size_t tinyblok_b64url_encode(const unsigned char *in, size_t len, char *out)
     return o;
 }
 
-// ---------------------------------------------------------------- public API
-
 int tinyblok_creds_load(void)
 {
     if (g_loaded)
@@ -159,7 +150,7 @@ int tinyblok_creds_load(void)
 
     const char *blob = nats_creds_start;
     size_t blob_len = (size_t)(nats_creds_end - nats_creds_start);
-    // EMBED_TXTFILES NUL-terminates; the trailing byte is not part of our content.
+    // EMBED_TXTFILES appends a NUL that isn't part of the content.
     if (blob_len > 0 && blob[blob_len - 1] == '\0')
         blob_len--;
 
@@ -177,13 +168,11 @@ int tinyblok_creds_load(void)
                  (unsigned)sizeof(g_jwt_buf));
         return -1;
     }
-    // Strip embedded whitespace; the JWT is one line in practice but we
-    // tolerate folded copies.
     size_t out = 0;
     for (size_t i = 0; i < jwt_len; i++)
     {
         char c = jwt_start[i];
-        if (c == '\r' || c == '\n' || c == ' ' || c == '\t')
+        if (is_ws(c))
             continue;
         g_jwt_buf[out++] = c;
     }
@@ -199,9 +188,8 @@ int tinyblok_creds_load(void)
         return -1;
     }
 
-    // Layout (nats-io/nkeys decodeSeed): raw[0..1] = two-byte prefix
-    // (seed-type + role-type), raw[2..33] = 32-byte Ed25519 seed,
-    // raw[34..35] = CRC16/XMODEM little-endian over raw[0..33] = 36 total.
+    // nats-io/nkeys decodeSeed layout: 2-byte prefix, 32-byte seed,
+    // 2-byte CRC16/XMODEM little-endian over the first 34 bytes.
     unsigned char raw[40];
     int decoded = base32_decode(seed_start, seed_len, raw, sizeof(raw));
     if (decoded != 36)
@@ -240,8 +228,7 @@ int tinyblok_creds_sign(const unsigned char *msg, size_t msg_len, unsigned char 
 
 #else // CONFIG_TINYBLOK_NATS_AUTH_CREDS
 
-// Stubs so that callers behind the same #ifdef link cleanly even if a stale
-// build leaves references behind. In practice nats.c also #ifdefs the calls.
+// Link-clean stubs for builds without creds auth.
 int tinyblok_creds_load(void) { return -1; }
 const tinyblok_creds_t *tinyblok_creds_get(void) { return NULL; }
 int tinyblok_creds_sign(const unsigned char *msg, size_t msg_len, unsigned char sig_out[64])
