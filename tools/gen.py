@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# codegen: patchbay.edn -> main/rules.zig.
-#   python tools/gen.py patchbay.edn main/rules.zig
+# codegen: patchbay.edn -> main/zig/rules.zig.
+#   python tools/gen.py patchbay.edn main/zig/rules.zig
 
 from __future__ import annotations
 

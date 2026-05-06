@@ -235,10 +235,7 @@ pub const Bar = struct {
 
         if (self.window_start_ms != aligned) {
             const out: Close = .{
-                .open = self.open,
-                .high = self.high,
-                .low = self.low,
-                .close = self.last_close,
+                .open = self.open, .high = self.high, .low = self.low, .close = self.last_close,
             };
             self.open = x;
             self.high = x;
@@ -262,10 +259,7 @@ pub const Bar = struct {
         const w: i64 = @intCast(self.window_ms);
         if (now_ms - self.window_start_ms < w) return null;
         const out: Close = .{
-            .open = self.open,
-            .high = self.high,
-            .low = self.low,
-            .close = self.last_close,
+            .open = self.open, .high = self.high, .low = self.low, .close = self.last_close,
         };
         self.count = 0;
         self.window_start_ms = 0;
@@ -378,12 +372,8 @@ fn MovingExtremum(comptime N: usize, comptime cmp: fn (f64, f64) bool) type {
     };
 }
 
-fn gtFloat(a: f64, b: f64) bool {
-    return a > b;
-}
-fn ltFloat(a: f64, b: f64) bool {
-    return a < b;
-}
+fn gtFloat(a: f64, b: f64) bool { return a > b; }
+fn ltFloat(a: f64, b: f64) bool { return a < b; }
 
 pub fn MovingMax(comptime N: usize) type {
     return MovingExtremum(N, gtFloat);

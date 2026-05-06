@@ -24,7 +24,7 @@ THE SOFTWARE.
 
 This project vendors third-party code with separate licenses:
 
-  main/tweetnacl.c, main/tweetnacl.h
+  main/c/tweetnacl.c, main/c/tweetnacl.h
     TweetNaCl (https://tweetnacl.cr.yp.to/)
     Authors: D. J. Bernstein, B. van Gastel, W. Janssen, T. Lange,
              P. Schwabe, S. Smetsers
