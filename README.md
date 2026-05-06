@@ -31,6 +31,8 @@ Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `rate`, `percentile`, `median`, `stddev`, `variance`, `min`, `max`,
 `abs`, `sign`, `lvc`, and `bridge`.
 
+>This does not mean never - some are trivial, some make no sense to even bother with (bridge, for instance is implicit). Others are tricky due to static code gen.
+
 ## Drivers
 
 A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
