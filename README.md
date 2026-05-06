@@ -1,38 +1,54 @@
 # tinyblok
 
-ESP-IDF project uses the patchbay DSL from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) on a MCU dev board, shipping sensor data back to a NATS cluster (or monoblok) over TCP. [Read the introductory blog post](https://alexjreid.dev/posts/tinyblok/)
+ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes sensor data to NATS. The DSL/runtime matches the pure Zig op kernel vendored from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok). [Intro blog post](https://alexjreid.dev/posts/tinyblok/).
 
 ## Status
-- Connects to wifi (run make menuconfig to setup)
-- Connects to a NATS broker over TCP (host/port config also in menuconfig under "tinyblok")
-- TLS and `.creds` (NATS user JWT/nkey) support added, configurable in `make menuconfig`
-- Run make build flash and then make monitor if you want to connect and run
-- emits to a handful of `tinyblock.>` subjects on specified broker, see the [patchbay.edn](./patchbay.edn)
+
+- Connects to Wi-Fi, then NATS over TCP or TLS.
+- Supports no auth, user/pass, or NATS `.creds` auth.
+- Publishes heap, RSSI, uptime, and temperature-derived subjects from [`patchbay.edn`](./patchbay.edn).
+- Set Wi-Fi and upstream NATS details with `make menuconfig`; ESP-IDF writes them to local `sdkconfig`.
+- Run `make build`, `make flash`, then `make monitor` to try it on hardware.
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
-## Why codegen
+## How it fits
 
-A small Python tool compiles the patchbay s-expression file into Zig ahead of build. While monoblok walks the parsed tree at runtime with a per-message arena for scratch; on a microcontroller that is not feasible, so on-device the rules become straight-line Zig with statically-allocated state slots. The op kernels themselves (squelch, deadband, moving-*, edges, bars, …) live in a shared kernel that both monoblok and tinyblok call into, so the DSL has one implementation and the codegen step is just wiring things at build (comp!?) time. Using `comptime` was too hard for me at this stage but I actually think Python is fine here.
+[`tools/gen.py`](./tools/gen.py) compiles [`patchbay.edn`](./patchbay.edn) into [`main/zig/rules.zig`](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
+
+The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
 ## Drivers
 
-A driver is just a function. `(pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)` in the patchbay says "call this function at 1 Hz, format the return value, and publish it to `tinyblok.temp`." Codegen turns each `(pump ...)` form into an `extern fn` declaration on the Zig side and an entry in a static `tinyblok_pumps[]` table the C side reads. The function itself can be written in either language: a C function (like `tinyblok_read_temp_c`, which calls into IDF's temperature sensor API) or an exported Zig function (`export fn ... callconv(.c)`) both satisfy the same `extern fn` contract. Pick C when the driver needs IDF headers, pick Zig when it doesn't. Adding a sensor means writing one function and one line of patchbay. See [alexjreid.dev/posts/tinyblok](https://alexjreid.dev/posts/tinyblok/) for worked examples.
+A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
 
-The C side (`main/c/drivers.c`) wires that table into IDF's native event loop. Each pump gets its own `esp_timer` armed at the requested period; the timer fires onto a private `esp_event` base, and a single handler indexes into the pump table to call the generated `fire()` into Zig. Sample reads, formatting, and rule evaluation all run on the `esp_event` task, so the main Zig loop only handles network drain.
+```clojure
+(pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)
+```
 
-Only polled drivers exist today. Push-style drivers (GPIO ISRs, UART RX) are not yet implemented; the plan is for them to use a slightly different `(pump ...)` form (no `:hz`, since the source decides cadence) and register their own event ids on the same `esp_event` base, reusing the handler shape so an interrupt-driven sensor looks the same to the patchbay as a polled one.
+Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig. Use C for IDF-heavy sources, Zig for dependency-free ones.
 
 ## TX ring
 
-A ring buffer sits between rule eval and the NATS socket. `publish!` enqueues a record (subject borrowed by pointer with payload inline); the loop drains it via non-blocking `send()` once per tick. A slow broker or Wi-Fi retransmit burst drops the oldest queued samples rather than stalling the rule loop, so when the broker comes back it gets a catch-up burst of recent data instead of stale history. Default capacity is 8 KB so ~256 messages at typical payload sizes; this is configurable.
+[`main/zig/tx_ring.zig`](./main/zig/tx_ring.zig) sits between rule eval and the NATS socket. `publish!` queues a subject/payload record; [`main/zig/main.zig`](./main/zig/main.zig) drains it through [`main/c/nats.c`](./main/c/nats.c). If Wi-Fi or the broker stalls, the ring drops the oldest samples rather than blocking rule evaluation.
 
-A lot of the time old messages have no value and can just be dropped, which is what the ring already does. In contexts where signal is spotty and old messages have value in spite of their age, such as a remote sensor where every reading matters and the link is flaky for hours at a time, a future option is to spool overflow records to LittleFS on flash so a long outage can be flushed when the broker returns.
+## Why C and Zig
 
-A related future addition is a producer-side timestamp header (such as `X-Measured-At: <unix_ms>`) so downstream consumers can distinguish "when the device measured this" from "when the broker ingested it". Useful precisely when the ring delivers a catch-up burst on reconnect.
+[`main/c/stub.c`](./main/c/stub.c), [`main/c/nats.c`](./main/c/nats.c), [`main/c/drivers.c`](./main/c/drivers.c), and [`main/c/sources.c`](./main/c/sources.c) own the ESP-IDF surface: Wi-Fi, NVS, sockets, TLS, timers, events, and sensors. Zig owns the portable patchbay path: generated rules, op kernels, and the publish queue.
 
-## Why some of this is in C
+That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`.
 
-The IDF-touching bits (Wi-Fi, NVS, lwIP sockets, the NATS client, the temperature sensor) live in C. ESP-IDF's headers lean heavily on macros like `ESP_ERROR_CHECK`, `WIFI_INIT_CONFIG_DEFAULT`, `IPSTR`/`IP2STR`, and FreeRTOS event-group bits, which don't translate cleanly through `@cImport`, so calling them from Zig would mean writing thin C shims anyway. Keeping the IDF surface in C and reserving Zig for the dependency-free hot path (the patchbay runtime and the sample-and-publish loop) was just the shorter route. It also keeps the Zig side portable enough to host-test without dragging IDF in.
+## Commands
 
-The driver layer falls under the same rule. `main/c/drivers.c` is the bridge between the generated pump table and IDF's native event loop: it arms one `esp_timer` per pump, posts onto a private `esp_event` base, and a single handler dispatches back into Zig. Doing that interop from Zig would mean reimplementing macros like `ESP_EVENT_DEFINE_BASE` and `ESP_ERROR_CHECK` by hand, so the bridge stays in C and Zig only sees the `fire()` callback at the end of it.
+Use the top-level [`Makefile`](./Makefile):
+
+```sh
+make gen
+make test
+make build
+make flash
+make monitor
+make menuconfig
+```
+
+Checked-in defaults belong in [`sdkconfig.defaults`](./sdkconfig.defaults); local choices live in `sdkconfig`. Real secrets do not: use [`secrets/nats.creds.example`](./secrets/nats.creds.example) as the local `.creds` template.
