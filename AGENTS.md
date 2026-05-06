@@ -54,6 +54,14 @@ make sync-kernel-remote # fetch kernel.zig from GitHub
 - C/Zig interop uses `extern fn` both ways. Undefined-reference linker errors usually mean one side lacks the matching exported symbol.
 - Keep ESP-IDF-heavy code in C. IDF macros such as `ESP_ERROR_CHECK`, `WIFI_INIT_CONFIG_DEFAULT`, `IPSTR`/`IP2STR`, event groups, and `ESP_EVENT_DEFINE_BASE` do not translate cleanly through `@cImport`.
 
+## Memory Model
+
+- Use stack buffers for temporary formatting, parsing, and subject construction.
+- Use static generated state for patchbay ops; this is the firmware equivalent of monoblok's long-lived rule state.
+- Use fixed rings or fixed pools for persistent windows such as aggregates, samples, and queued publishes.
+- Avoid `std.heap.GeneralPurposeAllocator` in runtime firmware; its metadata and failure behavior are a poor fit for small deterministic hot paths.
+- Use heap allocation only at boot/config boundaries, not per pump tick, per publish, or per clock fire.
+
 ## Build Notes
 
 `main/CMakeLists.txt` intentionally lists optional sources eagerly, then applies Kconfig conditionals after `idf_component_register` with `target_sources` and `idf_component_optional_requires`. ESP-IDF's component manager parses the registration call greedily.

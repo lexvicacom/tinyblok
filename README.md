@@ -18,6 +18,19 @@ ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes s
 
 The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
+## Patchbay parity
+
+Tinyblok intentionally implements a static, numeric subset of monoblok's
+patchbay. Supported forms include `when`, `->`, comparisons, `deadband`,
+`squelch`, `moving-*`, `round`, `quantize`, `clamp`, `throttle`, edge
+gates, `publish!`, `count!`, `bar!`, `sample!`, and `debounce!`.
+
+Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
+`aggregate!`, JSON forms, string/subject builders beyond publish-target
+`subject-append`, general arithmetic, `changed?`, `delta`, `hold-off`,
+`rate`, `percentile`, `median`, `stddev`, `variance`, `min`, `max`,
+`abs`, `sign`, `lvc`, and `bridge`.
+
 ## Drivers
 
 A driver is just a function named from [`patchbay.edn`](./patchbay.edn):

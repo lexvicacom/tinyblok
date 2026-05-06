@@ -92,6 +92,88 @@ pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     emit(subject, buf[0..len]);
 }
 
+pub const ClockEmitter = struct {
+    period_ms: i64,
+    deadline_ms: i64 = 0,
+    armed: bool = false,
+    has_payload: bool = false,
+    payload: [64]u8 = undefined,
+    payload_len: usize = 0,
+
+    fn setPayload(self: *ClockEmitter, bytes: []const u8) void {
+        const len = @min(bytes.len, self.payload.len);
+        if (len > 0) @memcpy(self.payload[0..len], bytes[0..len]);
+        self.payload_len = len;
+        self.has_payload = true;
+    }
+
+    fn setFloat(self: *ClockEmitter, value: f64) void {
+        const n = snprintf(&self.payload, self.payload.len, "%.6f", value);
+        if (n <= 0) {
+            self.payload_len = 0;
+            self.has_payload = false;
+            return;
+        }
+        self.payload_len = @min(@as(usize, @intCast(n)), self.payload.len - 1);
+        self.has_payload = true;
+    }
+
+    pub fn updateSample(self: *ClockEmitter, now_ms: i64, bytes: []const u8) ?i64 {
+        self.setPayload(bytes);
+        if (!self.armed) {
+            self.armed = true;
+            self.deadline_ms = now_ms + self.period_ms;
+        }
+        return self.nextDeadlineMs();
+    }
+
+    pub fn updateSampleFloat(self: *ClockEmitter, now_ms: i64, value: f64) ?i64 {
+        self.setFloat(value);
+        if (!self.armed) {
+            self.armed = true;
+            self.deadline_ms = now_ms + self.period_ms;
+        }
+        return self.nextDeadlineMs();
+    }
+
+    pub fn updateDebounce(self: *ClockEmitter, now_ms: i64, bytes: []const u8) ?i64 {
+        self.setPayload(bytes);
+        self.armed = true;
+        self.deadline_ms = now_ms + self.period_ms;
+        return self.nextDeadlineMs();
+    }
+
+    pub fn updateDebounceFloat(self: *ClockEmitter, now_ms: i64, value: f64) ?i64 {
+        self.setFloat(value);
+        self.armed = true;
+        self.deadline_ms = now_ms + self.period_ms;
+        return self.nextDeadlineMs();
+    }
+
+    pub fn fireSample(self: *ClockEmitter, now_ms: i64) bool {
+        if (!self.armed or !self.has_payload) return false;
+        if (now_ms < self.deadline_ms) return false;
+        self.deadline_ms = now_ms + self.period_ms;
+        return true;
+    }
+
+    pub fn fireDebounce(self: *ClockEmitter, now_ms: i64) bool {
+        if (!self.armed or !self.has_payload) return false;
+        if (now_ms < self.deadline_ms) return false;
+        self.armed = false;
+        return true;
+    }
+
+    pub fn payloadSlice(self: *const ClockEmitter) []const u8 {
+        return self.payload[0..self.payload_len];
+    }
+
+    pub fn nextDeadlineMs(self: *const ClockEmitter) ?i64 {
+        if (!self.armed) return null;
+        return self.deadline_ms;
+    }
+};
+
 pub const Throttle = struct {
     interval_us: u64,
     last_us: u64 = 0,

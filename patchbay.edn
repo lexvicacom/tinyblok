@@ -40,6 +40,18 @@
         (round 0)
         (publish! (subject-append "avg5s")))))
 
+;; Clock-native emitters: sample keeps a fixed cadence after first input;
+;; debounce publishes the latest value only after the feed has been quiet.
+(on "tinyblok.rssi"
+  (when (not (= payload-float 0))
+    (-> payload-float
+        (sample! :ms 5000 (subject-append "sample5s")))))
+
+(on "tinyblok.rssi"
+  (when (not (= payload-float 0))
+    (-> payload-float
+        (debounce! :ms 1000 (subject-append "settled")))))
+
 (on "tinyblok.rssi"
   (when (and (not (= payload-float 0)) (< payload-float -75))
     (-> payload (rising-edge) (publish! "tinyblok.alert.rssi.weak"))))

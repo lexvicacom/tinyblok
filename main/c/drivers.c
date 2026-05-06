@@ -2,12 +2,11 @@
 // on_pump_event runs on the esp_event task and calls into the Zig-side
 // pump table; the main loop only services network I/O.
 //
-// Time-windowed `bar! :ms` slots use the same dispatch path: at boot we
-// create one esp_timer per generated `tinyblok_clock_slots[]` entry,
-// initially not armed. The Zig dispatcher and per-slot fire fn each call
-// `tinyblok_clock_arm(slot_id, us)` to schedule a one-shot timer at the
-// slot's exact next deadline (computed by the kernel's `nextDeadlineMs`),
-// replacing the previous periodic walker.
+// Clock-native patchbay slots (`bar! :ms`, `sample!`, `debounce!`) use the
+// same dispatch path: at boot we create one esp_timer per generated
+// `tinyblok_clock_slots[]` entry, initially not armed. The Zig dispatcher and
+// per-slot fire fn each call `tinyblok_clock_arm(slot_id, us)` to schedule a
+// one-shot timer at the slot's exact next deadline.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -126,7 +125,7 @@ void tinyblok_drivers_start(void)
         };
         ESP_ERROR_CHECK(esp_timer_create(&args, &s_clock_handles[i]));
         // No initial arm; the Zig dispatcher arms each slot on the first
-        // PUB that opens its bar.
+        // PUB that materialises its state.
     }
     if (tinyblok_clock_slot_count > 0)
     {

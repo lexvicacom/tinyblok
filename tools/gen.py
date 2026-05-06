@@ -115,9 +115,9 @@ def _parse_one(t, it: Iterator) -> Node:
 @dataclass
 class Slot:
     name: str
-    kind: str  # deadband | squelch | moving_avg_tick | rising_edge | falling_edge | throttle_ms | bar_tick | bar_time
+    kind: str  # deadband | squelch | moving_avg_tick | rising_edge | falling_edge | throttle_ms | bar_tick | bar_time | sample | debounce
     arg: float
-    # bar slots: subject prefix used for the four .bar.{open,high,low,close} emits.
+    # Clock slots: target subject or subject prefix for generated emits.
     subject: str = ""
 
 
@@ -228,6 +228,10 @@ class Emitter:
             self._emit_terminal_publish(out, lst, None, raw_payload=True)
         elif head in ("count!", "count"):
             self._emit_terminal_count(out, lst, value_var=None)
+        elif head == "sample!":
+            self._emit_terminal_clock_emit(out, lst, "sample", value_var=None, raw_payload=True)
+        elif head == "debounce!":
+            self._emit_terminal_clock_emit(out, lst, "debounce", value_var=None, raw_payload=True)
         else:
             raise SyntaxError(f"unknown rule form: {head}")
 
@@ -270,6 +274,15 @@ class Emitter:
                 if not last:
                     raise SyntaxError("count! must be last in ->")
                 self._emit_terminal_count(out, op_list, current_var)
+                continue
+
+            if op_head in ("sample!", "debounce!"):
+                if not last:
+                    raise SyntaxError(f"{op_head} must be last in ->")
+                if post_edge:
+                    raise SyntaxError(f"{op_head} cannot follow rising-edge / falling-edge")
+                kind = "sample" if op_head == "sample!" else "debounce"
+                self._emit_terminal_clock_emit(out, op_list, kind, current_var, raw_payload=False)
                 continue
 
             next_var = current_var + 1
@@ -349,10 +362,7 @@ class Emitter:
                 out.append(f": bool = state.{slot}.update(__v{in_var} != 0);\n")
                 out.append(f"        if (!__v{in_var + 1}) break :blk;\n")
             case _:
-                # Pass-through for unsupported ops (e.g. bar!) so codegen still completes.
-                sys.stderr.write(f"gen: warning: skipping unsupported op '{head}'\n")
-                out.append(f": f64 = __v{in_var};\n")
-                out.append(f"        _ = __v{in_var + 1}; // skipped: ({head} ...)\n")
+                raise SyntaxError(f"unsupported Tinyblok patchbay op: {head}")
 
     def _emit_terminal_publish(
         self, out: list[str], op_list: list, value_var: int | None,
@@ -360,19 +370,7 @@ class Emitter:
     ) -> None:
         if len(op_list) < 2:
             raise SyntaxError("publish! needs target")
-        target = op_list[1]
-        if isinstance(target, Str):
-            target_zig = f'"{target}"'
-        elif isinstance(target, list):
-            if len(target) < 2:
-                raise SyntaxError("subject-append needs an arg")
-            sub_head = _expect_sym(target[0])
-            if sub_head != "subject-append":
-                raise SyntaxError(f"unknown publish target: {sub_head}")
-            suffix = _expect_str(target[1])
-            target_zig = f'"{self.current_filter}.{suffix}"'
-        else:
-            raise SyntaxError("unknown publish target")
+        target_zig = self._target_zig(op_list[1])
 
         # Three cases for what gets sent:
         #   value_var: float result of a `->` chain (formatted %.6f)
@@ -403,6 +401,70 @@ class Emitter:
                 out.append(f"        pb.emit({target_zig}, {payload_zig});\n")
             else:
                 out.append(f'        pb.emit({target_zig}, "1");\n')
+
+    def _target_zig(self, target: Node) -> str:
+        if isinstance(target, Str):
+            return f'"{target}"'
+        if isinstance(target, list):
+            if len(target) < 2:
+                raise SyntaxError("subject-append needs an arg")
+            sub_head = _expect_sym(target[0])
+            if sub_head != "subject-append":
+                raise SyntaxError(f"unknown publish target: {sub_head}")
+            suffix = _expect_str(target[1])
+            return f'"{self.current_filter}.{suffix}"'
+        raise SyntaxError("unknown publish target")
+
+    def _emit_terminal_clock_emit(
+        self,
+        out: list[str],
+        op_list: list,
+        kind: str,
+        value_var: int | None,
+        raw_payload: bool,
+    ) -> None:
+        if len(op_list) < 4:
+            raise SyntaxError(f"{kind}! needs :ms N SUBJECT")
+        if not isinstance(op_list[1], Kw) or op_list[1] != "ms":
+            raise SyntaxError(f"{kind}! window must be :ms N")
+        period_ms = int(_expect_num(op_list[2]))
+        if period_ms <= 0:
+            raise SyntaxError(f"{kind}! :ms N must be positive")
+        target_zig = self._target_zig(op_list[3])
+        slot = self.add_slot(kind, "sa" if kind == "sample" else "dbn", float(period_ms), subject=target_zig.strip('"'))
+        slot_id = self._clock_slot_id(slot)
+        update = "updateSample" if kind == "sample" else "updateDebounce"
+        if raw_payload:
+            if len(op_list) == 4:
+                out.append(
+                    f"        if (state.{slot}.{update}(tinyblok_now_ms(), payload_raw)) |__dl| {{\n"
+                    f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                    f"        }}\n"
+                )
+            elif len(op_list) == 5:
+                value = op_list[4]
+                if isinstance(value, Sym) and value == "payload":
+                    out.append(
+                        f"        if (state.{slot}.{update}(tinyblok_now_ms(), payload_raw)) |__dl| {{\n"
+                        f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                        f"        }}\n"
+                    )
+                else:
+                    out.append(
+                        f"        if (state.{slot}.{update}Float(tinyblok_now_ms(), {_value_expr(value)})) |__dl| {{\n"
+                        f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                        f"        }}\n"
+                    )
+            else:
+                raise SyntaxError(f"{kind}! takes :ms N SUBJECT [VALUE]")
+        else:
+            if len(op_list) != 4:
+                raise SyntaxError(f"threaded {kind}! stores the threaded value; omit VALUE")
+            out.append(
+                f"        if (state.{slot}.{update}Float(tinyblok_now_ms(), __v{value_var})) |__dl| {{\n"
+                f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
+                f"        }}\n"
+            )
 
     def _emit_terminal_bar(self, out: list[str], op_list: list, value_var: int) -> None:
         if len(op_list) < 2:
@@ -449,16 +511,19 @@ class Emitter:
             )
 
     def _bar_time_slot_id(self, slot_name: str) -> int:
-        """Return the dense u32 slot id for a `bar_time` slot, in declaration
+        return self._clock_slot_id(slot_name)
+
+    def _clock_slot_id(self, slot_name: str) -> int:
+        """Return the dense u32 slot id for a clock slot, in declaration
         order. Used to index the per-slot clock table on the C side."""
         idx = 0
         for s in self.slots:
-            if s.kind != "bar_time":
+            if s.kind not in ("bar_time", "sample", "debounce"):
                 continue
             if s.name == slot_name:
                 return idx
             idx += 1
-        raise KeyError(f"bar_time slot {slot_name} not found")
+        raise KeyError(f"clock slot {slot_name} not found")
 
     def _emit_terminal_count(self, out: list[str], op_list: list, value_var: int | None) -> None:
         if len(op_list) > 1:
@@ -549,6 +614,10 @@ class Emitter:
                     )
                 case "count":
                     out.append(f"    {slot.name}: pb.Count = .{{}},\n")
+                case "sample" | "debounce":
+                    out.append(
+                        f"    {slot.name}: pb.ClockEmitter = .{{ .period_ms = {int(slot.arg)} }},\n"
+                    )
 
         out.append("};\n" "\n" "var state: State = .{};\n" "\n")
 
@@ -626,16 +695,16 @@ class Emitter:
         return "".join(out)
 
     def _render_clocks(self) -> str:
-        """Generate the per-time-bar fire functions plus the C-visible
-        clock-slot table. Each fire fn runs `Bar.timeTick`, emits the close
-        if the window elapsed, and re-arms the slot's one-shot timer at
-        the next deadline. The C side (drivers.c) creates one
+        """Generate per-clock-slot fire functions plus the C-visible
+        clock-slot table. Each fire fn runs the slot's deadline action,
+        emits if due, and re-arms the slot when it remains active. The C
+        side (drivers.c) creates one
         `esp_timer_handle_t` per entry in `tinyblok_clock_slots[]` and
         dispatches its callback into the matching `fire`."""
-        time_bars = [s for s in self.slots if s.kind == "bar_time"]
+        clock_slots = [s for s in self.slots if s.kind in ("bar_time", "sample", "debounce")]
         out: list[str] = []
         # Always emit the helper + extern + table so the C side has a stable
-        # symbol surface, even when there are zero time bars.
+        # symbol surface, even when there are zero clock slots.
         out.append(
             "\nextern fn tinyblok_clock_arm(slot_id: usize, us_until: u64) void;\n"
             "\n"
@@ -646,19 +715,33 @@ class Emitter:
             "    return @as(u64, @intCast(diff)) * 1000;\n"
             "}\n"
         )
-        for slot in time_bars:
-            out.append(
-                f"\nexport fn tinyblok_bar_{slot.name}_fire() callconv(.c) void {{\n"
-                f"    const now_ms: i64 = tinyblok_now_ms();\n"
-                f"    if (state.{slot.name}.timeTick(now_ms)) |__c| {{\n"
-            )
-            for f in ("open", "high", "low", "close"):
+        for slot in clock_slots:
+            fn_name = f"tinyblok_clock_{slot.name}_fire"
+            out.append(f"\nexport fn {fn_name}() callconv(.c) void {{\n")
+            out.append(f"    const now_ms: i64 = tinyblok_now_ms();\n")
+            if slot.kind == "bar_time":
                 out.append(
-                    f'        pb.emitFloat("{slot.subject}.bar.{f}", __c.{f}, 6);\n'
+                    f"    if (state.{slot.name}.timeTick(now_ms)) |__c| {{\n"
                 )
-            slot_id = self._bar_time_slot_id(slot.name)
+                for f in ("open", "high", "low", "close"):
+                    out.append(
+                        f'        pb.emitFloat("{slot.subject}.bar.{f}", __c.{f}, 6);\n'
+                    )
+                out.append("    }\n")
+            elif slot.kind == "sample":
+                out.append(
+                    f"    if (state.{slot.name}.fireSample(now_ms)) {{\n"
+                    f'        pb.emit("{slot.subject}", state.{slot.name}.payloadSlice());\n'
+                    f"    }}\n"
+                )
+            elif slot.kind == "debounce":
+                out.append(
+                    f"    if (state.{slot.name}.fireDebounce(now_ms)) {{\n"
+                    f'        pb.emit("{slot.subject}", state.{slot.name}.payloadSlice());\n'
+                    f"    }}\n"
+                )
+            slot_id = self._clock_slot_id(slot.name)
             out.append(
-                f"    }}\n"
                 f"    if (state.{slot.name}.nextDeadlineMs()) |__dl| {{\n"
                 f"        tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
                 f"    }}\n"
@@ -669,11 +752,11 @@ class Emitter:
             "    fire: *const fn () callconv(.c) void,\n"
             "};\n"
         )
-        out.append(f"\nexport const tinyblok_clock_slot_count: usize = {len(time_bars)};\n")
-        if time_bars:
-            out.append(f"export const tinyblok_clock_slots: [{len(time_bars)}]ClockSlot = .{{\n")
-            for slot in time_bars:
-                out.append(f"    .{{ .fire = &tinyblok_bar_{slot.name}_fire }},\n")
+        out.append(f"\nexport const tinyblok_clock_slot_count: usize = {len(clock_slots)};\n")
+        if clock_slots:
+            out.append(f"export const tinyblok_clock_slots: [{len(clock_slots)}]ClockSlot = .{{\n")
+            for slot in clock_slots:
+                out.append(f"    .{{ .fire = &tinyblok_clock_{slot.name}_fire }},\n")
             out.append("};\n")
         else:
             # Empty array: keep the symbol so drivers.c can link unconditionally.
