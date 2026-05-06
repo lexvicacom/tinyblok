@@ -5,7 +5,7 @@ ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes s
 ## Status
 
 - Connects to Wi-Fi, then NATS over TCP or TLS.
-- Supports no auth, user/pass, or NATS `.creds` auth.
+- Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
 - Publishes heap, RSSI, uptime, and temperature-derived subjects from [`patchbay.edn`](./patchbay.edn).
 - Set Wi-Fi and upstream NATS details with `make menuconfig`; ESP-IDF writes them to local `sdkconfig`.
 - Run `make build`, `make flash`, then `make monitor` to try it on hardware.
