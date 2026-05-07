@@ -23,7 +23,7 @@ The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That fi
 Tinyblok is a firmware-sized patchbay for telemetry. Rules are compiled ahead
 of time into deterministic Zig, run with fixed state, read local sensor pumps,
 derive new subjects, answer fixed request/reply subjects, and publish the
-results to NATS without allocating on the hot path.
+results to NATS without allocating.
 
 It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
 loading, dynamic graph edits, JSON/event document processing, inbound bridges,
