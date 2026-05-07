@@ -12,6 +12,8 @@ ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes s
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
+<img width="1254" height="1038" alt="Synadia Cloud connections view showing tinyblok connected" src="./docs/scl.png" />
+
 ## How it fits
 
 [`tools/gen.py`](./tools/gen.py) compiles [`patchbay.edn`](./patchbay.edn) into [`main/zig/rules.zig`](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
@@ -113,5 +115,7 @@ make flash
 make monitor
 make menuconfig
 ```
+
+<img width="1784" height="1302" alt="ESP-IDF menuconfig tinyblok Wi-Fi and NATS settings" src="./docs/conf.png" />
 
 Checked-in defaults belong in [`sdkconfig.defaults`](./sdkconfig.defaults); local choices live in `sdkconfig`. Real secrets do not: use [`secrets/nats.creds.example`](./secrets/nats.creds.example) as the local `.creds` template.
