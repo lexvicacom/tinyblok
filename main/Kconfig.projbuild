@@ -43,10 +43,8 @@ menu "tinyblok"
             Adds ~100 KB flash and ~30 KB RAM. Leave off for a
             plaintext broker on a trusted LAN.
 
-            Assumes "handshake-first" TLS (server speaks TLS
-            immediately on the configured port). The upgrade-style
-            handshake triggered by INFO's tls_required field is not
-            supported.
+            Uses NATS' INFO-first TLS flow: the broker sends plaintext
+            INFO, then the client upgrades to TLS before CONNECT.
 
     config TINYBLOK_NATS_TLS_BUNDLE
         bool "Verify server with built-in CA bundle"

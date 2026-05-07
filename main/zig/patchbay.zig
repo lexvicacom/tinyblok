@@ -28,6 +28,12 @@ pub const clamp = kernel.clamp;
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 
 extern fn tinyblok_nats_try_send(data: [*]const u8, data_len: usize) callconv(.c) isize;
+extern fn tinyblok_nats_reply(
+    subject: [*]const u8,
+    subject_len: usize,
+    payload: [*]const u8,
+    payload_len: usize,
+) callconv(.c) c_int;
 
 /// Push everything currently buffered. Called once per tick from rules.collect().
 pub fn flush() void {
@@ -90,6 +96,28 @@ pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     if (n <= 0) return;
     const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
     emit(subject, buf[0..len]);
+}
+
+pub fn reply(subject: []const u8, payload: []const u8) void {
+    if (subject.len == 0) return;
+    _ = tinyblok_nats_reply(subject.ptr, subject.len, payload.ptr, payload.len);
+}
+
+pub fn replyFloat(subject: []const u8, value: f64, decimals: u8) void {
+    var buf: [32]u8 = undefined;
+    const prec: c_int = @intCast(decimals);
+    const n = snprintf(&buf, buf.len, "%.*f", prec, value);
+    if (n <= 0) return;
+    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    reply(subject, buf[0..len]);
+}
+
+pub fn replyInt(subject: []const u8, value: i64) void {
+    var buf: [32]u8 = undefined;
+    const n = snprintf(&buf, buf.len, "%lld", value);
+    if (n <= 0) return;
+    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    reply(subject, buf[0..len]);
 }
 
 pub const ClockEmitter = struct {

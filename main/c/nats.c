@@ -32,6 +32,17 @@ extern size_t tinyblok_tx_ring_used(void);
 extern size_t tinyblok_tx_ring_count(void);
 extern void tinyblok_tx_ring_reset_in_flight(void);
 
+typedef struct
+{
+    const char *subject;
+} tinyblok_request_sub_t;
+
+extern const size_t tinyblok_request_sub_count;
+extern const tinyblok_request_sub_t tinyblok_request_subs[];
+extern void tinyblok_nats_handle_msg(const unsigned char *subject, size_t subject_len,
+                                     const unsigned char *reply, size_t reply_len,
+                                     const unsigned char *payload, size_t payload_len);
+
 static int sock = -1;
 
 #if CONFIG_TINYBLOK_NATS_TLS
@@ -42,6 +53,7 @@ static int tls_inited = 0;
 #endif
 
 #define NET_OPEN() (sock >= 0)
+#define NATS_SUBJECT_MAX 128
 
 static char rx_buf[768];
 static size_t rx_len = 0;
@@ -358,6 +370,54 @@ static int build_connect_line(const char *info, size_t info_len, char *out, size
 #endif
 }
 
+static int send_request_subs(void)
+{
+    for (size_t i = 0; i < tinyblok_request_sub_count; i++)
+    {
+        const char *subject = tinyblok_request_subs[i].subject;
+        char line[NATS_SUBJECT_MAX + 32];
+        int n = snprintf(line, sizeof(line), "SUB %s %u\r\n", subject, (unsigned)(i + 1));
+        if (n <= 0 || (size_t)n >= sizeof(line))
+        {
+            ESP_LOGE(TAG, "request subject too long: %s", subject);
+            return -1;
+        }
+        if (net_send_all(line, (size_t)n) != 0)
+            return -1;
+        ESP_LOGI(TAG, "request '%s' subscribed", subject);
+    }
+    return 0;
+}
+
+int tinyblok_nats_reply(const unsigned char *subject, size_t subject_len,
+                        const unsigned char *payload, size_t payload_len)
+{
+    if (!NET_OPEN() || subject_len == 0 || subject_len > NATS_SUBJECT_MAX)
+        return -1;
+
+    char hdr[NATS_SUBJECT_MAX + 32];
+    int n = snprintf(hdr, sizeof(hdr), "PUB %.*s %u\r\n",
+                     (int)subject_len, (const char *)subject, (unsigned)payload_len);
+    if (n <= 0 || (size_t)n >= sizeof(hdr))
+        return -1;
+    if (net_send_all(hdr, (size_t)n) != 0)
+    {
+        close_sock(1);
+        return -1;
+    }
+    if (payload_len > 0 && net_send_all(payload, payload_len) != 0)
+    {
+        close_sock(1);
+        return -1;
+    }
+    if (net_send_all("\r\n", 2) != 0)
+    {
+        close_sock(1);
+        return -1;
+    }
+    return 0;
+}
+
 static int try_connect_once(int verbose_failure)
 {
     const char *host = CONFIG_TINYBLOK_NATS_HOST;
@@ -446,6 +506,13 @@ static int try_connect_once(int verbose_failure)
         net_close();
         return -1;
     }
+    if (send_request_subs() != 0)
+    {
+        if (verbose_failure)
+            ESP_LOGE(TAG, "send(SUB) failed");
+        net_close();
+        return -1;
+    }
 
     // Steady-state I/O is non-blocking; handshake and CONNECT are done.
     int flags = fcntl(sock, F_GETFL, 0);
@@ -498,6 +565,74 @@ void tinyblok_nats_maintain(void)
     (void)try_connect_once(0);
 }
 
+typedef struct
+{
+    const unsigned char *subject;
+    size_t subject_len;
+    const unsigned char *reply;
+    size_t reply_len;
+    size_t payload_len;
+} nats_msg_t;
+
+static int parse_size(const char *p, size_t len, size_t *out)
+{
+    if (len == 0)
+        return -1;
+    size_t v = 0;
+    for (size_t i = 0; i < len; i++)
+    {
+        if (p[i] < '0' || p[i] > '9')
+            return -1;
+        v = v * 10 + (size_t)(p[i] - '0');
+    }
+    *out = v;
+    return 0;
+}
+
+static int parse_msg_line(char *line, size_t line_len, nats_msg_t *msg)
+{
+    if (line_len < 4 || memcmp(line, "MSG ", 4) != 0)
+        return -1;
+
+    char *tok[4] = {0};
+    size_t tok_len[4] = {0};
+    size_t ntok = 0;
+    size_t i = 4;
+    while (i < line_len && ntok < 4)
+    {
+        while (i < line_len && line[i] == ' ')
+            i++;
+        if (i >= line_len)
+            break;
+        size_t start = i;
+        while (i < line_len && line[i] != ' ')
+            i++;
+        tok[ntok] = line + start;
+        tok_len[ntok] = i - start;
+        ntok++;
+    }
+    while (i < line_len && line[i] == ' ')
+        i++;
+    if (i < line_len)
+        return -1;
+
+    if (ntok != 3 && ntok != 4)
+        return -1;
+
+    msg->subject = (const unsigned char *)tok[0];
+    msg->subject_len = tok_len[0];
+    if (ntok == 3)
+    {
+        msg->reply = (const unsigned char *)"";
+        msg->reply_len = 0;
+        return parse_size(tok[2], tok_len[2], &msg->payload_len);
+    }
+
+    msg->reply = (const unsigned char *)tok[2];
+    msg->reply_len = tok_len[2];
+    return parse_size(tok[3], tok_len[3], &msg->payload_len);
+}
+
 void tinyblok_nats_drain_rx(void)
 {
     if (!NET_OPEN())
@@ -531,6 +666,40 @@ void tinyblok_nats_drain_rx(void)
         if (crlf == NULL)
             break;
         size_t line_len = (size_t)(crlf - line);
+
+        if (line_len >= 4 && memcmp(line, "MSG ", 4) == 0)
+        {
+            nats_msg_t msg;
+            if (parse_msg_line(line, line_len, &msg) != 0)
+            {
+                ESP_LOGW(TAG, "malformed MSG line");
+                scan += line_len + 2;
+                continue;
+            }
+
+            size_t payload_off = line_len + 2;
+            size_t frame_len = payload_off + msg.payload_len + 2;
+            if (remaining < frame_len)
+                break;
+            unsigned char *payload = (unsigned char *)line + payload_off;
+            if (line[frame_len - 2] != '\r' || line[frame_len - 1] != '\n')
+            {
+                ESP_LOGW(TAG, "malformed MSG payload terminator");
+                close_sock(1);
+                return;
+            }
+
+            if (msg.reply_len > 0)
+            {
+                tinyblok_nats_handle_msg(msg.subject, msg.subject_len,
+                                         msg.reply, msg.reply_len,
+                                         payload, msg.payload_len);
+                if (!NET_OPEN())
+                    return;
+            }
+            scan += frame_len;
+            continue;
+        }
 
         if (line_len == 4 && memcmp(line, "PING", 4) == 0)
         {

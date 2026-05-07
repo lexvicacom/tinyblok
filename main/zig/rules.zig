@@ -195,6 +195,21 @@ fn onAlex(payload_float: f64, payload_raw: []const u8, depth: u8) void {
     }
 }
 
+fn reqPing(payload_float: f64, payload_raw: []const u8, reply_subject: []const u8) void {
+    _ = payload_float;
+    _ = payload_raw;
+        pb.reply(reply_subject, "pong");
+}
+
+fn reqUptime(payload_float: f64, payload_raw: []const u8, reply_subject: []const u8) void {
+    _ = payload_float;
+    _ = payload_raw;
+    {
+        const __v0: f64 = @as(f64, @floatFromInt(tinyblok_uptime_us())) / 1_000_000.0;
+        pb.replyFloat(reply_subject, __v0, 6);
+    }
+}
+
 fn eql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     var i: usize = 0;
@@ -239,6 +254,42 @@ fn dispatchInternal(subject: []const u8, payload: []const u8, depth: u8) void {
         onAlex(v, payload, depth);
     }
 }
+
+export fn tinyblok_nats_handle_msg(
+    subject_ptr: [*]const u8,
+    subject_len: usize,
+    reply_ptr: [*]const u8,
+    reply_len: usize,
+    payload_ptr: [*]const u8,
+    payload_len: usize,
+) callconv(.c) void {
+    if (payload_len + 1 > 64) return;
+    const subject = subject_ptr[0..subject_len];
+    const reply_subject = reply_ptr[0..reply_len];
+    const payload = payload_ptr[0..payload_len];
+
+    var pl_buf: [64]u8 = undefined;
+    @memcpy(pl_buf[0..payload.len], payload);
+    pl_buf[payload.len] = 0;
+    const pl_z: [*:0]const u8 = @ptrCast(&pl_buf);
+    const v: f64 = strtod(pl_z, null);
+
+    if (eql(subject, "tinyblok.req.ping")) {
+        reqPing(v, payload, reply_subject);
+    } else if (eql(subject, "tinyblok.req.uptime")) {
+        reqUptime(v, payload, reply_subject);
+    }
+}
+
+pub const RequestSub = extern struct {
+    subject: [*:0]const u8,
+};
+
+export const tinyblok_request_sub_count: usize = 2;
+export const tinyblok_request_subs: [2]RequestSub = .{
+    .{ .subject = "tinyblok.req.ping" },
+    .{ .subject = "tinyblok.req.uptime" },
+};
 
 fn dispatchFmt(subject: []const u8, comptime fmt: [*:0]const u8, args: anytype) void {
     var buf: [32]u8 = undefined;

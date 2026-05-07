@@ -129,6 +129,12 @@ class RuleEmit:
 
 
 @dataclass
+class ReqEmit:
+    subject: str
+    body_zig: str
+
+
+@dataclass
 class Pump:
     subject: str
     from_sym: str
@@ -151,10 +157,12 @@ _TYPE_TABLE: dict[str, dict] = {
 class Emitter:
     slots: list[Slot] = field(default_factory=list)
     rules: list[RuleEmit] = field(default_factory=list)
+    reqs: list[ReqEmit] = field(default_factory=list)
     pumps: list[Pump] = field(default_factory=list)
     rule_idx: int = 0
     current_filter: str = ""
     current_reentrant: bool = False
+    current_request: bool = False
 
     def slot_name(self, prefix: str, idx: int) -> str:
         return f"rule{self.rule_idx}_{prefix}{idx}"
@@ -187,6 +195,7 @@ class Emitter:
             raise SyntaxError("(on FILTER BODY...) needs filter and body")
         filt = _expect_str(list_node[1])
         self.current_filter = filt
+        self.current_request = False
         # Optional :reentrant true between filter and body. Mirrors monoblok's
         # patchbay; default-off so a publish! doesn't accidentally re-enter
         # rule eval and surprise an existing rule set.
@@ -213,6 +222,20 @@ class Emitter:
         self.rules.append(RuleEmit(filter=filt, body_zig="".join(body_parts), reentrant=reentrant))
         self.rule_idx += 1
 
+    def emit_request(self, list_node: list) -> None:
+        if len(list_node) < 3:
+            raise SyntaxError("(on-req SUBJECT BODY...) needs subject and body")
+        subject = _expect_str(list_node[1])
+        self.current_filter = subject
+        self.current_reentrant = False
+        self.current_request = True
+        body_parts: list[str] = []
+        for form in list_node[2:]:
+            self._emit_form(body_parts, form)
+        self.reqs.append(ReqEmit(subject=subject, body_zig="".join(body_parts)))
+        self.current_request = False
+        self.rule_idx += 1
+
     def _emit_form(self, out: list[str], n: Node) -> None:
         lst = _expect_list(n)
         if not lst:
@@ -226,6 +249,8 @@ class Emitter:
             # Bare top-level publish republishes the original payload bytes.
             # Inside `->`, value_var carries the transformed float instead.
             self._emit_terminal_publish(out, lst, None, raw_payload=True)
+        elif head in ("reply!", "reply"):
+            self._emit_terminal_reply(out, lst, None, raw_payload=True)
         elif head in ("count!", "count"):
             self._emit_terminal_count(out, lst, value_var=None)
         elif head == "sample!":
@@ -260,6 +285,13 @@ class Emitter:
                     raise SyntaxError("publish! must be last in ->")
                 vv = None if post_edge else current_var
                 self._emit_terminal_publish(out, op_list, vv, raw_payload=False)
+                continue
+
+            if op_head in ("reply!", "reply"):
+                if not last:
+                    raise SyntaxError("reply! must be last in ->")
+                vv = None if post_edge else current_var
+                self._emit_terminal_reply(out, op_list, vv, raw_payload=False)
                 continue
 
             if op_head in ("bar!", "bar"):
@@ -401,6 +433,48 @@ class Emitter:
                 out.append(f"        pb.emit({target_zig}, {payload_zig});\n")
             else:
                 out.append(f'        pb.emit({target_zig}, "1");\n')
+
+    def _emit_terminal_reply(
+        self, out: list[str], op_list: list, value_var: int | None,
+        raw_payload: bool = False,
+    ) -> None:
+        if not self.current_request:
+            raise SyntaxError("reply! is only valid inside on-req")
+
+        # Three cases for what gets sent:
+        #   value_var: float result of a `->` chain
+        #   raw_payload: original payload bytes, or explicit literal/value
+        #   neither: post-edge marker "1"
+        if value_var is not None:
+            if len(op_list) != 1:
+                raise SyntaxError("threaded reply! stores the threaded value; omit VALUE")
+            out.append(f"        pb.replyFloat(reply_subject, __v{value_var}, 6);\n")
+            return
+
+        if raw_payload:
+            if len(op_list) == 1:
+                out.append("        pb.reply(reply_subject, payload_raw);\n")
+                return
+            if len(op_list) != 2:
+                raise SyntaxError("reply! takes at most one payload value")
+            value = op_list[1]
+            if isinstance(value, Str):
+                out.append(f'        pb.reply(reply_subject, "{value}");\n')
+                return
+            if isinstance(value, Sym) and value == "payload":
+                out.append("        pb.reply(reply_subject, payload_raw);\n")
+                return
+            if isinstance(value, Sym) and value == "payload-float":
+                out.append("        pb.replyFloat(reply_subject, payload_float, 6);\n")
+                return
+            if isinstance(value, float):
+                out.append(f"        pb.replyFloat(reply_subject, {_zig_num(value)}, 6);\n")
+                return
+            raise SyntaxError("reply! value must be a string, number, payload, or payload-float")
+
+        if len(op_list) != 1:
+            raise SyntaxError("reply! after an edge gate cannot take VALUE")
+        out.append('        pb.reply(reply_subject, "1");\n')
 
     def _target_zig(self, target: Node) -> str:
         if isinstance(target, Str):
@@ -647,6 +721,22 @@ class Emitter:
                     out.append(r.body_zig)
             out.append("}\n\n")
 
+        for req in self.reqs:
+            fn_name = _request_to_fn_name(req.subject)
+            uses_raw = "payload_raw" in req.body_zig
+            uses_reply = "reply_subject" in req.body_zig
+            out.append(
+                f"fn {fn_name}(payload_float: f64, payload_raw: []const u8, reply_subject: []const u8) void {{\n"
+            )
+            if "payload_float" not in req.body_zig:
+                out.append("    _ = payload_float;\n")
+            if not uses_raw:
+                out.append("    _ = payload_raw;\n")
+            if not uses_reply:
+                out.append("    _ = reply_subject;\n")
+            out.append(req.body_zig)
+            out.append("}\n\n")
+
         out.append(
             "fn eql(a: []const u8, b: []const u8) bool {\n"
             "    if (a.len != b.len) return false;\n"
@@ -688,10 +778,61 @@ class Emitter:
             )
         out.append("    }\n}\n")
 
+        out.append(self._render_requests())
+
 
         if self.pumps:
             out.append(self._render_collect())
         out.append(self._render_clocks())
+        return "".join(out)
+
+    def _render_requests(self) -> str:
+        out: list[str] = []
+        out.append(
+            "\n"
+            "export fn tinyblok_nats_handle_msg(\n"
+            "    subject_ptr: [*]const u8,\n"
+            "    subject_len: usize,\n"
+            "    reply_ptr: [*]const u8,\n"
+            "    reply_len: usize,\n"
+            "    payload_ptr: [*]const u8,\n"
+            "    payload_len: usize,\n"
+            ") callconv(.c) void {\n"
+            "    if (payload_len + 1 > 64) return;\n"
+            "    const subject = subject_ptr[0..subject_len];\n"
+            "    const reply_subject = reply_ptr[0..reply_len];\n"
+            "    const payload = payload_ptr[0..payload_len];\n"
+            "\n"
+            "    var pl_buf: [64]u8 = undefined;\n"
+            "    @memcpy(pl_buf[0..payload.len], payload);\n"
+            "    pl_buf[payload.len] = 0;\n"
+            "    const pl_z: [*:0]const u8 = @ptrCast(&pl_buf);\n"
+            "    const v: f64 = strtod(pl_z, null);\n"
+            "\n"
+        )
+        for i, req in enumerate(self.reqs):
+            fn_name = _request_to_fn_name(req.subject)
+            kw = "if" if i == 0 else "} else if"
+            out.append(
+                f'    {kw} (eql(subject, "{req.subject}")) {{\n        {fn_name}(v, payload, reply_subject);\n'
+            )
+        if self.reqs:
+            out.append("    }\n")
+        out.append("}\n\n")
+
+        out.append(
+            "pub const RequestSub = extern struct {\n"
+            "    subject: [*:0]const u8,\n"
+            "};\n\n"
+        )
+        out.append(f"export const tinyblok_request_sub_count: usize = {len(self.reqs)};\n")
+        if self.reqs:
+            out.append(f"export const tinyblok_request_subs: [{len(self.reqs)}]RequestSub = .{{\n")
+            for req in self.reqs:
+                out.append(f'    .{{ .subject = "{req.subject}" }},\n')
+            out.append("};\n")
+        else:
+            out.append("export const tinyblok_request_subs: [0]RequestSub = .{};\n")
         return "".join(out)
 
     def _render_clocks(self) -> str:
@@ -830,6 +971,10 @@ def _value_expr(n: Node) -> str:
     if isinstance(n, Sym):
         if n in ("payload-float", "payload"):
             return "payload_float"
+        if n == "uptime-us":
+            return "@as(f64, @floatFromInt(tinyblok_uptime_us()))"
+        if n == "uptime-s":
+            return "@as(f64, @floatFromInt(tinyblok_uptime_us())) / 1_000_000.0"
         raise SyntaxError(f"unknown symbol: {n}")
     if isinstance(n, float):
         return f"@as(f64, {_zig_num(n)})"
@@ -876,6 +1021,26 @@ def _filter_to_fn_name(filt: str) -> str:
     prefix = "tinyblok."
     tail = filt[len(prefix) :] if filt.startswith(prefix) else filt
     out = ["on"]
+    upcase = True
+    for c in tail:
+        if c in ".-":
+            out.append("_")
+            upcase = False
+        elif upcase:
+            out.append(c.upper())
+            upcase = False
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _request_to_fn_name(subject: str) -> str:
+    prefix = "tinyblok."
+    tail = subject[len(prefix) :] if subject.startswith(prefix) else subject
+    req_prefix = "req."
+    if tail.startswith(req_prefix):
+        tail = tail[len(req_prefix):]
+    out = ["req"]
     upcase = True
     for c in tail:
         if c in ".-":
@@ -957,6 +1122,8 @@ def main(argv: list[str]) -> int:
             continue
         if head == "on":
             em.emit_rule(form)
+        elif head == "on-req":
+            em.emit_request(form)
         elif head == "pump":
             em.add_pump(form)
 

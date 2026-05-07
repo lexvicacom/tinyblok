@@ -18,12 +18,24 @@ ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes s
 
 The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
+## Patchbay Lite
+
+Tinyblok is a firmware-sized patchbay for telemetry. Rules are compiled ahead
+of time into deterministic Zig, run with fixed state, read local sensor pumps,
+derive new subjects, answer fixed request/reply subjects, and publish the
+results to NATS without allocating on the hot path.
+
+It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
+loading, dynamic graph edits, JSON/event document processing, inbound bridges,
+and fleet-management features are outside the current scope.
+
 ## Patchbay parity
 
 Tinyblok intentionally implements a static, numeric subset of monoblok's
 patchbay. Supported forms include `when`, `->`, comparisons, `deadband`,
 `squelch`, `moving-*`, `round`, `quantize`, `clamp`, `throttle`, edge
-gates, `publish!`, `count!`, `bar!`, `sample!`, and `debounce!`.
+gates, `publish!`, `count!`, `bar!`, `sample!`, `debounce!`, `on-req`,
+and `reply!`.
 
 Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `aggregate!`, JSON forms, string/subject builders beyond publish-target
@@ -42,6 +54,42 @@ A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
 ```
 
 Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig. Use C for IDF-heavy sources, Zig for dependency-free ones.
+
+## Request/reply
+
+`on-req` declares fixed NATS service subjects that Tinyblok subscribes to after
+every broker connect. The requester owns the `_INBOX` reply subject; Tinyblok
+only parses the incoming `MSG` reply-to field and sends `reply!` back to it.
+That keeps request handling static like the rest of Patchbay Lite: no arbitrary
+runtime `SUB`, no generated inboxes, and no pending request table on-device.
+
+This is useful for small control-plane actions that should not be continuous
+telemetry: pinging a device, reading uptime, asking it to reload published
+metadata, starting a sensor sweep, or triggering a one-shot diagnostic sample.
+It also works naturally for fleet queries. If many devices subscribe to the
+same request subject, one `nats req`-style request is effectively a broadcast:
+each device receives the same request and replies to the requester's inbox.
+Clients that expect fleet replies should wait for multiple responses rather
+than stopping after the first one.
+
+```clojure
+(on-req "tinyblok.req.ping"
+  (reply! "pong"))
+
+(on-req "tinyblok.req.uptime"
+  (-> uptime-s
+      (round 3)
+      (reply!)))
+```
+
+From a NATS client:
+
+```sh
+nats req tinyblok.req.ping ''
+nats req tinyblok.req.uptime ''
+```
+
+<img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
 
 ## TX ring
 

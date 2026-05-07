@@ -116,3 +116,12 @@
 
 (on "tinyblok.temp"
   (count!))
+
+;; Request/reply endpoints. Tinyblok only answers fixed request subjects;
+;; the requester owns the _INBOX reply subject.
+(on-req "tinyblok.req.ping"
+  (reply! "pong"))
+
+(on-req "tinyblok.req.uptime"
+  (-> uptime-s ; the fn to call, c or zig
+      (reply!)))
