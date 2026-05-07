@@ -29,7 +29,7 @@ It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
 loading, dynamic graph edits, JSON/event document processing, inbound bridges,
 and fleet-management features are outside the current scope.
 
-## Patchbay parity
+### What's there and not there
 
 Tinyblok intentionally implements a static, numeric subset of monoblok's
 patchbay. Supported forms include `when`, `->`, comparisons, `deadband`,
