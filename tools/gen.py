@@ -979,14 +979,14 @@ class Emitter:
             "    subject: [*:0]const u8,\n"
             "};\n\n"
         )
-        out.append(f"export const tinyblok_request_sub_count: usize = {len(self.reqs)};\n")
+        out.append(f"pub export const tinyblok_request_sub_count: usize = {len(self.reqs)};\n")
         if self.reqs:
-            out.append(f"export const tinyblok_request_subs: [{len(self.reqs)}]RequestSub = .{{\n")
+            out.append(f"pub export const tinyblok_request_subs: [{len(self.reqs)}]RequestSub = .{{\n")
             for req in self.reqs:
                 out.append(f'    .{{ .subject = "{req.subject}" }},\n')
             out.append("};\n")
         else:
-            out.append("export const tinyblok_request_subs: [0]RequestSub = .{};\n")
+            out.append("pub export const tinyblok_request_subs: [0]RequestSub = .{};\n")
         return "".join(out)
 
     def _render_clocks(self) -> str:
@@ -1047,15 +1047,15 @@ class Emitter:
             "    fire: *const fn () callconv(.c) void,\n"
             "};\n"
         )
-        out.append(f"\nexport const tinyblok_clock_slot_count: usize = {len(clock_slots)};\n")
+        out.append(f"\npub export const tinyblok_clock_slot_count: usize = {len(clock_slots)};\n")
         if clock_slots:
-            out.append(f"export const tinyblok_clock_slots: [{len(clock_slots)}]ClockSlot = .{{\n")
+            out.append(f"pub export const tinyblok_clock_slots: [{len(clock_slots)}]ClockSlot = .{{\n")
             for slot in clock_slots:
                 out.append(f"    .{{ .fire = &tinyblok_clock_{slot.name}_fire }},\n")
             out.append("};\n")
         else:
             # Empty array: keep the symbol so drivers.c can link unconditionally.
-            out.append("export const tinyblok_clock_slots: [0]ClockSlot = .{};\n")
+            out.append("pub export const tinyblok_clock_slots: [0]ClockSlot = .{};\n")
         return "".join(out)
 
     def _render_collect(self) -> str:
@@ -1090,8 +1090,8 @@ class Emitter:
         out.append("    period_us: u64,\n")
         out.append("    fire: *const fn () callconv(.c) void,\n")
         out.append("};\n\n")
-        out.append(f"export const tinyblok_pump_count: usize = {len(self.pumps)};\n")
-        out.append(f"export const tinyblok_pumps: [{len(self.pumps)}]Pump = .{{\n")
+        out.append(f"pub export const tinyblok_pump_count: usize = {len(self.pumps)};\n")
+        out.append(f"pub export const tinyblok_pumps: [{len(self.pumps)}]Pump = .{{\n")
         for p in self.pumps:
             period_us = 1_000_000 // p.hz
             fn = _pump_fn_name(p.subject)

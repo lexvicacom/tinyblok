@@ -145,12 +145,31 @@ Use the top-level [`Makefile`](./Makefile):
 
 ```sh
 make gen
+make soundcheck
 make test
 make build
 make flash
 make monitor
 make menuconfig
 ```
+
+`make soundcheck` builds a native host CLI from the generated patchbay. It
+reads newline-delimited `SUBJECT|payload` messages on stdin and writes emitted
+messages to stdout in the same shape. Top-level inputs are passed through
+first, followed by any patchbay emits:
+
+```sh
+printf 'tinyblok.temp|31\n' | ./soundcheck
+printf 'tinyblok.temp|31\n' | ./soundcheck --label
+printf 'tinyblok.rssi|-80\n' | ./soundcheck --label --linger-ms 1200
+```
+
+When stdin reaches EOF, `soundcheck` keeps pending timers alive for up to 10 s
+by default, so `sample!`, `debounce!`, and wall-clock `bar!` rules can still
+fire after piped input closes. Use `--linger-ms N` to change that window, or
+`--linger-ms 0` to exit immediately after EOF.
+
+See [`guide.md`](./guide.md) for the standalone `soundcheck` guide.
 
 <img width="1784" height="1302" alt="ESP-IDF menuconfig tinyblok Wi-Fi and NATS settings" src="./docs/conf.png" />
 

@@ -307,8 +307,8 @@ pub const RequestSub = extern struct {
     subject: [*:0]const u8,
 };
 
-export const tinyblok_request_sub_count: usize = 4;
-export const tinyblok_request_subs: [4]RequestSub = .{
+pub export const tinyblok_request_sub_count: usize = 4;
+pub export const tinyblok_request_subs: [4]RequestSub = .{
     .{ .subject = "tinyblok.req.ping" },
     .{ .subject = "tinyblok.req.uptime" },
     .{ .subject = "tinyblok.req.hello-c" },
@@ -345,8 +345,8 @@ pub const Pump = extern struct {
     fire: *const fn () callconv(.c) void,
 };
 
-export const tinyblok_pump_count: usize = 4;
-export const tinyblok_pumps: [4]Pump = .{
+pub export const tinyblok_pump_count: usize = 4;
+pub export const tinyblok_pumps: [4]Pump = .{
     .{ .subject = "tinyblok.heap", .period_us = 100000, .fire = &tinyblok_pump_heap },
     .{ .subject = "tinyblok.rssi", .period_us = 100000, .fire = &tinyblok_pump_rssi },
     .{ .subject = "tinyblok.uptime", .period_us = 100000, .fire = &tinyblok_pump_uptime },
@@ -399,8 +399,8 @@ pub const ClockSlot = extern struct {
     fire: *const fn () callconv(.c) void,
 };
 
-export const tinyblok_clock_slot_count: usize = 3;
-export const tinyblok_clock_slots: [3]ClockSlot = .{
+pub export const tinyblok_clock_slot_count: usize = 3;
+pub export const tinyblok_clock_slots: [3]ClockSlot = .{
     .{ .fire = &tinyblok_clock_rule5_sa5_fire },
     .{ .fire = &tinyblok_clock_rule6_dbn6_fire },
     .{ .fire = &tinyblok_clock_rule14_bt12_fire },
