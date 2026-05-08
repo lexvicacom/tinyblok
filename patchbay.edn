@@ -8,6 +8,9 @@
 (pump "tinyblok.uptime" :from tinyblok_uptime_us    :type uptime-s :hz 10)
 (pump "tinyblok.temp"   :from tinyblok_read_temp_c  :type f32      :hz 1)
 
+(fn hello-c   :from tinyblok_hello_c   :type bytes)
+(fn hello-zig :from tinyblok_hello_zig :type bytes)
+
 ;; --- heap: dedupe + 1 s rolling avg, alert on low ---
 ;; :reentrant lets the deduped value re-enter rule eval so the alert below
 ;; fires off the *stable* signal, not raw heap. Downstream rule sees fewer
@@ -125,3 +128,9 @@
 (on-req "tinyblok.req.uptime"
   (-> uptime-s ; the fn to call, c or zig
       (reply!)))
+
+(on-req "tinyblok.req.hello-c"
+  (reply! (hello-c payload)))
+
+(on-req "tinyblok.req.hello-zig"
+  (reply! (hello-zig payload)))

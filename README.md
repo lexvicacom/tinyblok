@@ -57,13 +57,42 @@ A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
 
 Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig. Use C for IDF-heavy sources, Zig for dependency-free ones.
 
+Request handlers can also call registered functions:
+
+```clojure
+(fn hello-c :from tinyblok_hello_c :type bytes)
+
+(on-req "tinyblok.req.hello-c"
+  (reply! (hello-c payload)))
+```
+
+`:type bytes` functions receive the raw NATS request payload and write a reply
+into a caller-owned stack buffer. Numeric function types (`u32`, `i32`, `f32`,
+`uptime-s`) are zero-argument reads and can be used anywhere a numeric value is
+accepted.
+
+Function `:type` values:
+
+| Type | Shape | Use |
+| --- | --- | --- |
+| `bytes` | request bytes in, reply bytes out | `(reply! (name payload))` |
+| `u32` | zero-arg numeric read | numeric value |
+| `i32` | zero-arg numeric read | numeric value |
+| `f32` | zero-arg numeric read, widened to `f64` | numeric value |
+| `uptime-s` | zero-arg `u64` microsecond read, converted to seconds | numeric value |
+
 ## Request/reply
 
 `on-req` declares fixed NATS service subjects that Tinyblok subscribes to after
 every broker connect. The requester owns the `_INBOX` reply subject; Tinyblok
 only parses the incoming `MSG` reply-to field and sends `reply!` back to it.
+Replies can be inline literals, numeric rule results, the original request
+payload, or the result of a registered `:type bytes` function.
+
 That keeps request handling static like the rest of Patchbay Lite: no arbitrary
 runtime `SUB`, no generated inboxes, and no pending request table on-device.
+The generated handler dispatches by subject and uses stack buffers for payload
+parsing and function-backed replies.
 
 This is useful for small control-plane actions that should not be continuous
 telemetry: pinging a device, reading uptime, asking it to reload published
@@ -82,6 +111,9 @@ than stopping after the first one.
   (-> uptime-s
       (round 3)
       (reply!)))
+
+(on-req "tinyblok.req.hello-c"
+  (reply! (hello-c payload)))
 ```
 
 From a NATS client:
@@ -89,6 +121,8 @@ From a NATS client:
 ```sh
 nats req tinyblok.req.ping ''
 nats req tinyblok.req.uptime ''
+nats req tinyblok.req.hello-c codex
+nats req tinyblok.req.hello-zig codex
 ```
 
 <img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />

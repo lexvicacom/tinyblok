@@ -142,6 +142,13 @@ class Pump:
     hz: int
 
 
+@dataclass
+class Function:
+    name: str
+    from_sym: str
+    type_: str
+
+
 # Per-type wire-up. read_ret is the Zig type the C extern returns; pre is a
 # transform applied before formatting (Zig expression with {x} placeholder for
 # the read value); fmt is the printf format string passed to snprintf.
@@ -151,6 +158,7 @@ _TYPE_TABLE: dict[str, dict] = {
     "f32":      {"read_ret": "f32",   "pre": "@as(f64, {x})",            "fmt": "%.7f"},
     "uptime-s": {"read_ret": "u64",   "pre": "@as(f64, @floatFromInt({x})) / 1_000_000.0", "fmt": "%.3f"},
 }
+_REQ_BYTES_FN_TYPE = "bytes"
 
 
 @dataclass
@@ -159,6 +167,10 @@ class Emitter:
     rules: list[RuleEmit] = field(default_factory=list)
     reqs: list[ReqEmit] = field(default_factory=list)
     pumps: list[Pump] = field(default_factory=list)
+    functions: dict[str, Function] = field(default_factory=lambda: {
+        "uptime-us": Function(name="uptime-us", from_sym="tinyblok_uptime_us", type_="u64"),
+        "uptime-s": Function(name="uptime-s", from_sym="tinyblok_uptime_us", type_="uptime-s"),
+    })
     rule_idx: int = 0
     current_filter: str = ""
     current_reentrant: bool = False
@@ -189,6 +201,21 @@ class Emitter:
         if not isinstance(hz, float) or hz <= 0 or hz != int(hz):
             raise SyntaxError(f"pump {subject!r}: :hz must be a positive integer")
         self.pumps.append(Pump(subject=subject, from_sym=str(from_sym), type_=str(type_), hz=int(hz)))
+
+    def add_function(self, list_node: list) -> None:
+        if len(list_node) < 2:
+            raise SyntaxError("(fn NAME :from FN :type T) needs name")
+        name = _expect_sym(list_node[1])
+        kw = _kwargs(list_node[2:])
+        from_sym = kw.get("from")
+        type_ = kw.get("type")
+        if not isinstance(from_sym, Sym):
+            raise SyntaxError(f"fn {name}: :from must be a C symbol")
+        if not isinstance(type_, Sym):
+            raise SyntaxError(f"fn {name}: :type must be a symbol")
+        if str(type_) not in _TYPE_TABLE and str(type_) != _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"fn {name}: unknown :type {type_}")
+        self.functions[name] = Function(name=name, from_sym=str(from_sym), type_=str(type_))
 
     def emit_rule(self, list_node: list) -> None:
         if len(list_node) < 3:
@@ -268,7 +295,7 @@ class Emitter:
         need_label = _thread_has_break(ops)
         out.append("    blk: {\n" if need_label else "    {\n")
         out.append("        const __v0: f64 = ")
-        out.append(_value_expr(lst[1]))
+        out.append(self._value_expr(lst[1]))
         out.append(";\n")
 
         current_var = 0
@@ -470,11 +497,33 @@ class Emitter:
             if isinstance(value, float):
                 out.append(f"        pb.replyFloat(reply_subject, {_zig_num(value)}, 6);\n")
                 return
+            if isinstance(value, list):
+                self._emit_reply_call(out, value)
+                return
             raise SyntaxError("reply! value must be a string, number, payload, or payload-float")
 
         if len(op_list) != 1:
             raise SyntaxError("reply! after an edge gate cannot take VALUE")
         out.append('        pb.reply(reply_subject, "1");\n')
+
+    def _emit_reply_call(self, out: list[str], call: list) -> None:
+        if len(call) != 2:
+            raise SyntaxError("reply function call must be (fn payload)")
+        name = _expect_sym(call[0])
+        arg = _expect_sym(call[1])
+        if arg != "payload":
+            raise SyntaxError("reply function argument must be payload")
+        fn = self.functions.get(name)
+        if fn is None:
+            raise SyntaxError(f"unknown function: {name}")
+        if fn.type_ != _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"function {name} is not a byte reply function")
+        out.append("        var __reply_buf: [128]u8 = undefined;\n")
+        out.append(
+            f"        const __reply_len = {fn.from_sym}(payload_raw.ptr, payload_raw.len, &__reply_buf, __reply_buf.len);\n"
+        )
+        out.append("        const __reply_clamped = @min(__reply_len, __reply_buf.len);\n")
+        out.append("        pb.reply(reply_subject, __reply_buf[0..__reply_clamped]);\n")
 
     def _target_zig(self, target: Node) -> str:
         if isinstance(target, Str):
@@ -525,7 +574,7 @@ class Emitter:
                     )
                 else:
                     out.append(
-                        f"        if (state.{slot}.{update}Float(tinyblok_now_ms(), {_value_expr(value)})) |__dl| {{\n"
+                        f"        if (state.{slot}.{update}Float(tinyblok_now_ms(), {self._value_expr(value)})) |__dl| {{\n"
                         f"            tinyblok_clock_arm({slot_id}, deadlineUsFromNow(__dl));\n"
                         f"        }}\n"
                     )
@@ -613,11 +662,45 @@ class Emitter:
         if len(lst) < 3:
             raise SyntaxError("(when COND BODY...) needs cond and body")
         out.append("    if (")
-        out.append(_emit_cond(lst[1]))
+        out.append(self._emit_cond(lst[1]))
         out.append(") {\n")
         for form in lst[2:]:
             self._emit_form(out, form)
         out.append("    }\n")
+
+    def _value_expr(self, n: Node) -> str:
+        if isinstance(n, Sym):
+            if n in ("payload-float", "payload"):
+                return "payload_float"
+            fn = self.functions.get(str(n))
+            if fn is not None:
+                if fn.type_ == _REQ_BYTES_FN_TYPE:
+                    raise SyntaxError(f"byte function {n} cannot be used as a numeric value")
+                pre = _TYPE_TABLE[fn.type_]["pre"]
+                return pre.replace("{x}", f"{fn.from_sym}()")
+            raise SyntaxError(f"unknown symbol: {n}")
+        if isinstance(n, float):
+            return f"@as(f64, {_zig_num(n)})"
+        raise SyntaxError("expected number or symbol")
+
+    def _emit_cond(self, n: Node) -> str:
+        if not isinstance(n, list):
+            raise SyntaxError("cond must be a list")
+        if not n:
+            raise SyntaxError("empty cond")
+        head = _expect_sym(n[0])
+        binops = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "=="}
+        if head in binops:
+            if len(n) != 3:
+                raise SyntaxError(f"{head} needs two args")
+            return f"({self._value_expr(n[1])} {binops[head]} {self._value_expr(n[2])})"
+        if head == "not":
+            return f"!({self._emit_cond(n[1])})"
+        if head == "and":
+            return "(" + " and ".join(self._emit_cond(s) for s in n[1:]) + ")"
+        if head == "or":
+            return "(" + " or ".join(self._emit_cond(s) for s in n[1:]) + ")"
+        raise SyntaxError(f"unknown cond form: {head}")
 
     def render(self) -> str:
         out: list[str] = []
@@ -634,9 +717,20 @@ class Emitter:
             "extern fn tinyblok_now_ms() i64;\n"
             "extern fn strtod(nptr: [*:0]const u8, endptr: ?*[*:0]const u8) f64;\n"
         )
-        # Externs declared by pumps. Skip duplicates (a pump :from may collide
-        # with the always-emitted tinyblok_uptime_us above).
+        # Externs declared by registered functions and pumps. Skip duplicates
+        # because a pump :from may also be exposed as a request-time function.
         always = {"tinyblok_uptime_us"}
+        for fn in self.functions.values():
+            if fn.from_sym in always:
+                continue
+            if fn.type_ == _REQ_BYTES_FN_TYPE:
+                out.append(
+                    f"extern fn {fn.from_sym}(payload_ptr: [*]const u8, payload_len: usize, out_ptr: [*]u8, out_len: usize) usize;\n"
+                )
+            else:
+                ret = _TYPE_TABLE[fn.type_]["read_ret"]
+                out.append(f"extern fn {fn.from_sym}() {ret};\n")
+            always.add(fn.from_sym)
         for p in self.pumps:
             if p.from_sym in always:
                 continue
@@ -967,40 +1061,6 @@ def _thread_has_break(ops: list) -> bool:
     return False
 
 
-def _value_expr(n: Node) -> str:
-    if isinstance(n, Sym):
-        if n in ("payload-float", "payload"):
-            return "payload_float"
-        if n == "uptime-us":
-            return "@as(f64, @floatFromInt(tinyblok_uptime_us()))"
-        if n == "uptime-s":
-            return "@as(f64, @floatFromInt(tinyblok_uptime_us())) / 1_000_000.0"
-        raise SyntaxError(f"unknown symbol: {n}")
-    if isinstance(n, float):
-        return f"@as(f64, {_zig_num(n)})"
-    raise SyntaxError("expected number or symbol")
-
-
-def _emit_cond(n: Node) -> str:
-    if not isinstance(n, list):
-        raise SyntaxError("cond must be a list")
-    if not n:
-        raise SyntaxError("empty cond")
-    head = _expect_sym(n[0])
-    binops = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "=="}
-    if head in binops:
-        if len(n) != 3:
-            raise SyntaxError(f"{head} needs two args")
-        return f"({_value_expr(n[1])} {binops[head]} {_value_expr(n[2])})"
-    if head == "not":
-        return f"!({_emit_cond(n[1])})"
-    if head == "and":
-        return "(" + " and ".join(_emit_cond(s) for s in n[1:]) + ")"
-    if head == "or":
-        return "(" + " or ".join(_emit_cond(s) for s in n[1:]) + ")"
-    raise SyntaxError(f"unknown cond form: {head}")
-
-
 def _zig_num(x: float) -> str:
     # Match Zig's {d} formatting: integers print with no fractional part, floats keep theirs.
     if x == int(x):
@@ -1114,6 +1174,13 @@ def main(argv: list[str]) -> int:
     forms = parse(tokenize(src))
 
     em = Emitter()
+    for form in forms:
+        if not isinstance(form, list) or len(form) < 2:
+            continue
+        head = form[0]
+        if isinstance(head, Sym) and head == "fn":
+            em.add_function(form)
+
     for form in forms:
         if not isinstance(form, list) or len(form) < 2:
             continue
