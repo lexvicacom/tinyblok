@@ -1,6 +1,6 @@
 # tinyblok
 
-ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes sensor data to NATS. The DSL/runtime matches the pure Zig op kernel vendored from [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok). [Intro blog post](https://alexjreid.dev/posts/tinyblok/).
+ESP-IDF firmware for ESP32. It runs a tiny patchbay on-device and conditioned output to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok). [Intro blog post](https://alexjreid.dev/posts/tinyblok/).
 
 ## Status
 
@@ -11,14 +11,6 @@ ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes s
 - Run `make build flash`, then `make monitor` to try it on hardware.
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
-
-<img width="1254" height="1038" alt="Synadia Cloud connections view showing tinyblok connected" src="./docs/scl.png" />
-
-## How it fits
-
-[`tools/gen.py`](./tools/gen.py) compiles [`patchbay.edn`](./patchbay.edn) into [`main/zig/rules.zig`](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
-
-The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
 ## Patchbay Lite
 
@@ -149,6 +141,12 @@ nats req tinyblok.req.hello-zig tinyhi
 
 <img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
 
+### How it fits together
+
+[`tools/gen.py`](./tools/gen.py) compiles [`patchbay.edn`](./patchbay.edn) into [`main/zig/rules.zig`](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
+
+The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
+
 ## TX ring
 
 [`main/zig/tx_ring.zig`](./main/zig/tx_ring.zig) sits between rule eval and the NATS socket. `publish!` queues a subject/payload record; [`main/zig/main.zig`](./main/zig/main.zig) drains it through [`main/c/nats.c`](./main/c/nats.c). If Wi-Fi or the broker stalls, the ring drops the oldest samples rather than blocking rule evaluation.
@@ -159,7 +157,7 @@ nats req tinyblok.req.hello-zig tinyhi
 
 That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`.
 
-## Commands
+## make commands
 
 Use the top-level [`Makefile`](./Makefile):
 
