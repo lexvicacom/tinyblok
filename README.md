@@ -60,26 +60,28 @@ Codegen declares the function for Zig and adds it to a C pump table. [`main/c/dr
 Request handlers can also call registered functions:
 
 ```clojure
-(fn hello-c :from tinyblok_hello_c :type bytes)
+(fn hello-c :from tinyblok_hello_c :input bytes :type bytes)
 
 (on-req "tinyblok.req.hello-c"
   (reply! (hello-c payload)))
 ```
 
-`:type bytes` functions receive the raw NATS request payload and write a reply
-into a caller-owned stack buffer. Numeric function types (`u32`, `i32`, `f32`,
-`uptime-s`) are zero-argument reads and can be used anywhere a numeric value is
-accepted.
+Registered function `:type` describes the return value. Optional `:input`
+describes whether the function receives the current threaded value or request
+payload. Omit `:input` for zero-argument reads.
 
-Function `:type` values:
+Function shapes:
 
-| Type | Shape | Use |
+| Declaration | Shape | Use |
 | --- | --- | --- |
-| `bytes` | request bytes in, reply bytes out | `(reply! (name payload))` |
-| `u32` | zero-arg numeric read | numeric value |
-| `i32` | zero-arg numeric read | numeric value |
-| `f32` | zero-arg numeric read, widened to `f64` | numeric value |
-| `uptime-s` | zero-arg `u64` microsecond read, converted to seconds | numeric value |
+| `:input bytes :type bytes` | request bytes in, reply bytes out | `(reply! (name payload))` |
+| `:type u32` / `i32` / `f32` / `uptime-s` | zero-arg numeric read | numeric value |
+| `:input u32` / `i32` / `f32`, scalar `:type` | threaded scalar transform | `(-> payload-float (name) ...)` |
+
+For byte functions, codegen passes `payload_ptr`, `payload_len`, `out_ptr`, and
+`out_len`; the function returns the number of reply bytes written. For scalar
+input functions, codegen converts the current threaded `f64` into the declared
+input type and formats the scalar return value.
 
 ## Request/reply
 
@@ -87,7 +89,7 @@ Function `:type` values:
 every broker connect. The requester owns the `_INBOX` reply subject; Tinyblok
 only parses the incoming `MSG` reply-to field and sends `reply!` back to it.
 Replies can be inline literals, numeric rule results, the original request
-payload, or the result of a registered `:type bytes` function.
+payload, or the result of a registered `:input bytes :type bytes` function.
 
 That keeps request handling static like the rest of Patchbay Lite: no arbitrary
 runtime `SUB`, no generated inboxes, and no pending request table on-device.
