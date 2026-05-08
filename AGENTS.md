@@ -51,6 +51,7 @@ make sync-kernel-remote # fetch kernel.zig from GitHub
 - New tinyblok compile-time settings belong in `main/Kconfig.projbuild`, not ad hoc C defines.
 - `main/zig/rules.zig` is generated. Update `patchbay.edn` or `tools/gen.py`, then run `make gen` or `make build`.
 - `main/zig/kernel.zig` should byte-match monoblok. Make kernel changes upstream, then run `make sync-kernel` or `make sync-kernel-remote`.
+- Registered `(fn ...)` declarations use `:type` for return type and optional `:input` for arity/input. Omit `:input` for zero-arg scalar reads; use `:input bytes :type bytes` for request payload transforms; scalar `:input` functions are threaded ops.
 - C/Zig interop uses `extern fn` both ways. Undefined-reference linker errors usually mean one side lacks the matching exported symbol.
 - Keep ESP-IDF-heavy code in C. IDF macros such as `ESP_ERROR_CHECK`, `WIFI_INIT_CONFIG_DEFAULT`, `IPSTR`/`IP2STR`, event groups, and `ESP_EVENT_DEFINE_BASE` do not translate cleanly through `@cImport`.
 

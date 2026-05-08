@@ -147,6 +147,7 @@ class Function:
     name: str
     from_sym: str
     type_: str
+    input_: str | None = None
 
 
 # Per-type wire-up. read_ret is the Zig type the C extern returns; pre is a
@@ -159,6 +160,20 @@ _TYPE_TABLE: dict[str, dict] = {
     "uptime-s": {"read_ret": "u64",   "pre": "@as(f64, @floatFromInt({x})) / 1_000_000.0", "fmt": "%.3f"},
 }
 _REQ_BYTES_FN_TYPE = "bytes"
+_INPUT_TYPE_TABLE: dict[str, str] = {
+    "u32": "u32",
+    "i32": "c_int",
+    "f32": "f32",
+}
+_INPUT_TYPE_ALIASES: dict[str, str] = {
+    "bytes": "bytes",
+    "byte": "bytes",
+    "float": "f32",
+    "f32": "f32",
+    "int": "i32",
+    "i32": "i32",
+    "u32": "u32",
+}
 
 
 @dataclass
@@ -204,18 +219,35 @@ class Emitter:
 
     def add_function(self, list_node: list) -> None:
         if len(list_node) < 2:
-            raise SyntaxError("(fn NAME :from FN :type T) needs name")
+            raise SyntaxError("(fn NAME :from FN [:input T] :type T) needs name")
         name = _expect_sym(list_node[1])
         kw = _kwargs(list_node[2:])
         from_sym = kw.get("from")
         type_ = kw.get("type")
+        input_ = kw.get("input")
         if not isinstance(from_sym, Sym):
             raise SyntaxError(f"fn {name}: :from must be a C symbol")
-        if not isinstance(type_, Sym):
+        if not isinstance(type_, (Sym, Kw)):
             raise SyntaxError(f"fn {name}: :type must be a symbol")
         if str(type_) not in _TYPE_TABLE and str(type_) != _REQ_BYTES_FN_TYPE:
             raise SyntaxError(f"fn {name}: unknown :type {type_}")
-        self.functions[name] = Function(name=name, from_sym=str(from_sym), type_=str(type_))
+        input_str: str | None = None
+        if input_ is not None:
+            if not isinstance(input_, (Sym, Kw)):
+                raise SyntaxError(f"fn {name}: :input must be a symbol")
+            input_str = _INPUT_TYPE_ALIASES.get(str(input_))
+            if input_str is None:
+                raise SyntaxError(f"fn {name}: unknown :input {input_}")
+        elif str(type_) == _REQ_BYTES_FN_TYPE:
+            # Backward compatibility for the original request-transform form.
+            input_str = _REQ_BYTES_FN_TYPE
+
+        if input_str == _REQ_BYTES_FN_TYPE and str(type_) != _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"fn {name}: :input bytes currently requires :type bytes")
+        if input_str != _REQ_BYTES_FN_TYPE and str(type_) == _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"fn {name}: :type bytes requires :input bytes")
+
+        self.functions[name] = Function(name=name, from_sym=str(from_sym), type_=str(type_), input_=input_str)
 
     def emit_rule(self, list_node: list) -> None:
         if len(list_node) < 3:
@@ -421,7 +453,29 @@ class Emitter:
                 out.append(f": bool = state.{slot}.update(__v{in_var} != 0);\n")
                 out.append(f"        if (!__v{in_var + 1}) break :blk;\n")
             case _:
-                raise SyntaxError(f"unsupported Tinyblok patchbay op: {head}")
+                fn = self.functions.get(str(head))
+                if fn is None:
+                    raise SyntaxError(f"unsupported Tinyblok patchbay op: {head}")
+                self._emit_scalar_fn_op(out, fn, op_list, in_var)
+
+    def _emit_scalar_fn_op(self, out: list[str], fn: Function, op_list: list, in_var: int) -> None:
+        if len(op_list) != 1:
+            raise SyntaxError(f"function op {fn.name} takes no inline args; use -> threading")
+        if fn.input_ is None:
+            raise SyntaxError(f"function {fn.name} is zero-arg; use it as a value, not a threaded op")
+        if fn.input_ == _REQ_BYTES_FN_TYPE or fn.type_ == _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"byte function {fn.name} can only be used in reply! as ({fn.name} payload)")
+
+        arg = f"__v{in_var}"
+        if fn.input_ == "f32":
+            arg = f"@as(f32, @floatCast({arg}))"
+        elif fn.input_ == "i32":
+            arg = f"@as(c_int, @intFromFloat({arg}))"
+        elif fn.input_ == "u32":
+            arg = f"@as(u32, @intFromFloat({arg}))"
+
+        pre = _TYPE_TABLE[fn.type_]["pre"]
+        out.append(f": f64 = {pre.replace('{x}', f'{fn.from_sym}({arg})')};\n")
 
     def _emit_terminal_publish(
         self, out: list[str], op_list: list, value_var: int | None,
@@ -516,8 +570,8 @@ class Emitter:
         fn = self.functions.get(name)
         if fn is None:
             raise SyntaxError(f"unknown function: {name}")
-        if fn.type_ != _REQ_BYTES_FN_TYPE:
-            raise SyntaxError(f"function {name} is not a byte reply function")
+        if fn.input_ != _REQ_BYTES_FN_TYPE or fn.type_ != _REQ_BYTES_FN_TYPE:
+            raise SyntaxError(f"function {name} is not a bytes-in/bytes-out reply function")
         out.append("        var __reply_buf: [128]u8 = undefined;\n")
         out.append(
             f"        const __reply_len = {fn.from_sym}(payload_raw.ptr, payload_raw.len, &__reply_buf, __reply_buf.len);\n"
@@ -674,6 +728,8 @@ class Emitter:
                 return "payload_float"
             fn = self.functions.get(str(n))
             if fn is not None:
+                if fn.input_ is not None:
+                    raise SyntaxError(f"function {n} requires input and cannot be used as a zero-arg value")
                 if fn.type_ == _REQ_BYTES_FN_TYPE:
                     raise SyntaxError(f"byte function {n} cannot be used as a numeric value")
                 pre = _TYPE_TABLE[fn.type_]["pre"]
@@ -723,13 +779,17 @@ class Emitter:
         for fn in self.functions.values():
             if fn.from_sym in always:
                 continue
-            if fn.type_ == _REQ_BYTES_FN_TYPE:
+            if fn.input_ == _REQ_BYTES_FN_TYPE:
                 out.append(
                     f"extern fn {fn.from_sym}(payload_ptr: [*]const u8, payload_len: usize, out_ptr: [*]u8, out_len: usize) usize;\n"
                 )
             else:
                 ret = _TYPE_TABLE[fn.type_]["read_ret"]
-                out.append(f"extern fn {fn.from_sym}() {ret};\n")
+                if fn.input_ is None:
+                    out.append(f"extern fn {fn.from_sym}() {ret};\n")
+                else:
+                    arg = _INPUT_TYPE_TABLE[fn.input_]
+                    out.append(f"extern fn {fn.from_sym}(x: {arg}) {ret};\n")
             always.add(fn.from_sym)
         for p in self.pumps:
             if p.from_sym in always:
