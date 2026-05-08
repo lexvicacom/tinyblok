@@ -41,7 +41,7 @@ Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 
 ### Soundcheck
 
-`make soundcheck` builds a native host CLI from the generated patchbay. It
+Running `bin/soundcheck` builds a native host CLI from the generated patchbay. It
 reads newline-delimited `SUBJECT|payload` messages on stdin and writes emitted
 messages to stdout in the same shape. Top-level inputs are passed through
 first, followed by any patchbay emits:
