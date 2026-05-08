@@ -1,0 +1,14 @@
+.{
+    .name = .tinyblok,
+    .version = "0.1.0",
+    .fingerprint = 0x7dcd67d5deaaa63e,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "Makefile",
+        "README.md",
+        "patchbay.edn",
+        "tools",
+        "main",
+    },
+}

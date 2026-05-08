@@ -267,6 +267,42 @@ const DrainRecord = struct {
 
 const SendStatus = enum { complete, blocked, err };
 
+/// Host-side drain used by the native soundcheck CLI. Firmware drains records
+/// as NATS PUB frames; this emits the stored record shape directly.
+pub fn drainDelimited(writer: anytype) !void {
+    try drainDelimitedLabeled(writer, null, null);
+}
+
+/// Same as drainDelimited, with optional leading labels. `first_label` is used
+/// for the first record drained in this call; `rest_label` is used afterward.
+pub fn drainDelimitedLabeled(writer: anytype, first_label: ?[]const u8, rest_label: ?[]const u8) !void {
+    var first = true;
+    while (true) {
+        var rec: DrainRecord = undefined;
+
+        tinyblok_tx_ring_lock();
+        if (!copyHeadForDrain(&rec)) {
+            tinyblok_tx_ring_unlock();
+            return;
+        }
+        drain_pinned = false;
+        advance(rec.rec_size);
+        record_bytes_sent = 0;
+        tinyblok_tx_ring_unlock();
+
+        const label = if (first) first_label orelse rest_label else rest_label;
+        first = false;
+        if (label) |l| {
+            try writer.writeAll(l);
+            try writer.writeByte('|');
+        }
+        try writer.writeAll(rec.subject[0..rec.subject_len]);
+        try writer.writeByte('|');
+        try writer.writeAll(rec.payload[0..rec.payload_len]);
+        try writer.writeByte('\n');
+    }
+}
+
 /// Drain records into the socket. Stops on EAGAIN (try_send returns 0) or
 /// error (negative). Resumes mid-record via record_bytes_sent.
 pub fn drain(try_send: TrySendFn) void {
