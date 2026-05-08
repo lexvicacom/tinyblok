@@ -123,8 +123,8 @@ From a NATS client:
 ```sh
 nats req tinyblok.req.ping ''
 nats req tinyblok.req.uptime ''
-nats req tinyblok.req.hello-c codex
-nats req tinyblok.req.hello-zig codex
+nats req tinyblok.req.hello-c tinyhi
+nats req tinyblok.req.hello-zig tinyhi
 ```
 
 <img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
