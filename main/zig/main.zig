@@ -18,3 +18,27 @@ export fn zig_main() callconv(.c) void {
         vTaskDelay(10); // 100ms tick
     }
 }
+
+export fn tinyblok_hello_zig(
+    payload_ptr: [*]const u8,
+    payload_len: usize,
+    out_ptr: [*]u8,
+    out_len: usize,
+) callconv(.c) usize {
+    const prefix = "hello from zig: ";
+    var n: usize = 0;
+
+    for (prefix) |b| {
+        if (n >= out_len) return n;
+        out_ptr[n] = b;
+        n += 1;
+    }
+
+    for (payload_ptr[0..payload_len]) |b| {
+        if (n >= out_len) return n;
+        out_ptr[n] = b;
+        n += 1;
+    }
+
+    return n;
+}

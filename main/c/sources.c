@@ -2,6 +2,7 @@
 // `:from` symbol and called from a generated pump in rules.zig.
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "driver/temperature_sensor.h"
 #include "esp_system.h"
@@ -41,4 +42,18 @@ int tinyblok_wifi_rssi(void)
     if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK)
         return 0;
     return ap.rssi;
+}
+
+size_t tinyblok_hello_c(const uint8_t *payload, size_t payload_len, uint8_t *out, size_t out_len)
+{
+    static const char prefix[] = "hello from c: ";
+    size_t n = 0;
+
+    for (size_t i = 0; i < sizeof(prefix) - 1 && n < out_len; i++)
+        out[n++] = (uint8_t)prefix[i];
+
+    for (size_t i = 0; i < payload_len && n < out_len; i++)
+        out[n++] = payload[i];
+
+    return n;
 }

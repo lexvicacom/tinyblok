@@ -9,6 +9,8 @@ extern fn vTaskDelay(ticks: u32) void;
 extern fn tinyblok_uptime_us() u64;
 extern fn tinyblok_now_ms() i64;
 extern fn strtod(nptr: [*:0]const u8, endptr: ?*[*:0]const u8) f64;
+extern fn tinyblok_hello_c(payload_ptr: [*]const u8, payload_len: usize, out_ptr: [*]u8, out_len: usize) usize;
+extern fn tinyblok_hello_zig(payload_ptr: [*]const u8, payload_len: usize, out_ptr: [*]u8, out_len: usize) usize;
 extern fn tinyblok_free_heap() u32;
 extern fn tinyblok_wifi_rssi() c_int;
 extern fn tinyblok_read_temp_c() f32;
@@ -210,6 +212,22 @@ fn reqUptime(payload_float: f64, payload_raw: []const u8, reply_subject: []const
     }
 }
 
+fn reqHello_c(payload_float: f64, payload_raw: []const u8, reply_subject: []const u8) void {
+    _ = payload_float;
+        var __reply_buf: [128]u8 = undefined;
+        const __reply_len = tinyblok_hello_c(payload_raw.ptr, payload_raw.len, &__reply_buf, __reply_buf.len);
+        const __reply_clamped = @min(__reply_len, __reply_buf.len);
+        pb.reply(reply_subject, __reply_buf[0..__reply_clamped]);
+}
+
+fn reqHello_zig(payload_float: f64, payload_raw: []const u8, reply_subject: []const u8) void {
+    _ = payload_float;
+        var __reply_buf: [128]u8 = undefined;
+        const __reply_len = tinyblok_hello_zig(payload_raw.ptr, payload_raw.len, &__reply_buf, __reply_buf.len);
+        const __reply_clamped = @min(__reply_len, __reply_buf.len);
+        pb.reply(reply_subject, __reply_buf[0..__reply_clamped]);
+}
+
 fn eql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     var i: usize = 0;
@@ -278,6 +296,10 @@ export fn tinyblok_nats_handle_msg(
         reqPing(v, payload, reply_subject);
     } else if (eql(subject, "tinyblok.req.uptime")) {
         reqUptime(v, payload, reply_subject);
+    } else if (eql(subject, "tinyblok.req.hello-c")) {
+        reqHello_c(v, payload, reply_subject);
+    } else if (eql(subject, "tinyblok.req.hello-zig")) {
+        reqHello_zig(v, payload, reply_subject);
     }
 }
 
@@ -285,10 +307,12 @@ pub const RequestSub = extern struct {
     subject: [*:0]const u8,
 };
 
-export const tinyblok_request_sub_count: usize = 2;
-export const tinyblok_request_subs: [2]RequestSub = .{
+export const tinyblok_request_sub_count: usize = 4;
+export const tinyblok_request_subs: [4]RequestSub = .{
     .{ .subject = "tinyblok.req.ping" },
     .{ .subject = "tinyblok.req.uptime" },
+    .{ .subject = "tinyblok.req.hello-c" },
+    .{ .subject = "tinyblok.req.hello-zig" },
 };
 
 fn dispatchFmt(subject: []const u8, comptime fmt: [*:0]const u8, args: anytype) void {
