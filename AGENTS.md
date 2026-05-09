@@ -14,7 +14,9 @@ Keep `main/` as the ESP-IDF component root:
 
 ## Common Commands
 
-Use the top-level `Makefile`; it sources ESP-IDF's `export.sh` per command.
+Use the top-level `Makefile`. Run it from a shell where ESP-IDF is already
+exported, install ESP-IDF at `$(HOME)/esp-idf-v6.0.1`, or pass
+`IDF_PATH=/path/to/esp-idf` or `IDF_EXPORT=/path/to/esp-idf/export.sh`.
 
 ```sh
 make gen                # regenerate main/zig/rules.zig from patchbay.edn
@@ -28,7 +30,8 @@ make sync-kernel        # copy kernel.zig from ../monoblok
 make sync-kernel-remote # fetch kernel.zig from GitHub
 ```
 
-`PORT` defaults to `/dev/cu.usbmodem101`. `IDF_EXPORT` defaults to `/Users/alex/esp-idf-v6.0.1/export.sh`.
+`PORT` is optional. Leave it unset for ESP-IDF auto-detection, or pass a serial
+device such as `PORT=/dev/cu.usbmodem101`.
 
 `make sync-kernel-remote` fetches from `lexvicacom/monoblok` on GitHub. Override `KERNEL_REMOTE_REF=branch-or-sha` to pin a specific upstream revision.
 

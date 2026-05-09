@@ -7,6 +7,7 @@ dependencies.lock
 .zig-cache/
 soundcheck
 CLAUDE.md
+local.mk
 secrets/*
 !secrets/nats.creds.example
 .DS_Store

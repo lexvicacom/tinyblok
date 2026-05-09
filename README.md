@@ -192,6 +192,13 @@ make monitor
 make menuconfig
 ```
 
+Run these from a shell where ESP-IDF is already exported, install ESP-IDF at
+`$(HOME)/esp-idf-v6.0.1`, or pass `IDF_PATH=/path/to/esp-idf` or
+`IDF_EXPORT=/path/to/esp-idf/export.sh`. For hardware commands, leave `PORT`
+unset for ESP-IDF auto-detection or pass a serial device, for example
+`make flash PORT=/dev/cu.usbmodem101`. You can also put machine-local
+overrides in ignored `local.mk`.
+
 `make nats-host-smoke` exercises the host-built C NATS client against a local
 broker. It starts `nats-server` on `127.0.0.1:4223`, verifies request/reply on
 `tinyblok.req.ping`, then verifies a five-message publish batch on
