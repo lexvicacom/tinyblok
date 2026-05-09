@@ -322,3 +322,42 @@ export fn tinyblok_read_temp_c() f32 {
 }
 
 export fn vTaskDelay(_: u32) void {}
+
+test "generated rules registries are internally consistent" {
+    try std.testing.expectEqual(rules.tinyblok_pump_count, rules.tinyblok_pumps.len);
+    try std.testing.expectEqual(rules.tinyblok_request_sub_count, rules.tinyblok_request_subs.len);
+    try std.testing.expectEqual(rules.tinyblok_clock_slot_count, rules.tinyblok_clock_slots.len);
+    try std.testing.expect(rules.tinyblok_clock_slot_count <= clock_slots.len);
+    try std.testing.expect(rules.tinyblok_clock_slot_count <= 32);
+}
+
+test "generated pump metadata is bounded" {
+    for (rules.tinyblok_pumps) |pump| {
+        const subject = std.mem.span(pump.subject);
+        try std.testing.expect(subject.len > 0);
+        try std.testing.expect(subject.len <= tx_ring.SUBJ_MAX);
+        try std.testing.expect(pump.period_us > 0);
+    }
+}
+
+test "generated request subjects are bounded and unique" {
+    for (rules.tinyblok_request_subs, 0..) |sub, i| {
+        const subject = std.mem.span(sub.subject);
+        try std.testing.expect(subject.len > 0);
+        try std.testing.expect(subject.len <= 128);
+
+        for (rules.tinyblok_request_subs[0..i]) |prev| {
+            try std.testing.expect(!std.mem.eql(u8, subject, std.mem.span(prev.subject)));
+        }
+    }
+}
+
+test "generated dispatch keeps telemetry inside ring bounds" {
+    const dropped_before = tx_ring.dropped;
+
+    rules.dispatch("tinyblok.temp", "31");
+
+    try std.testing.expect(tx_ring.used() <= tx_ring.capacity());
+    try std.testing.expect(tx_ring.count() > 0);
+    try std.testing.expectEqual(dropped_before, tx_ring.dropped);
+}

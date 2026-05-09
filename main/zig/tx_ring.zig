@@ -24,6 +24,8 @@
 // contiguous tail-to-end region, head jumps to 0 and the tail bytes become
 // "slack" — accounted for separately so used_bytes only counts real records.
 
+const std = @import("std");
+
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 extern fn tinyblok_tx_ring_lock() callconv(.c) void;
 extern fn tinyblok_tx_ring_unlock() callconv(.c) void;
@@ -425,4 +427,153 @@ fn advance(n: usize) void {
     } else if (tail >= RING_CAP) {
         tail -= RING_CAP;
     }
+}
+
+fn testReset() void {
+    head = 0;
+    tail = 0;
+    used_bytes = 0;
+    slack_at_end = 0;
+    record_bytes_sent = 0;
+    drain_pinned = false;
+    dropped = 0;
+}
+
+fn testDropOne() void {
+    var rec: DrainRecord = undefined;
+    if (copyHeadForDrain(&rec)) {
+        drain_pinned = false;
+        advance(rec.rec_size);
+        record_bytes_sent = 0;
+    }
+}
+
+var test_send_cap: usize = 0;
+var test_send_buf: [RING_CAP * 2]u8 = undefined;
+var test_send_len: usize = 0;
+
+fn testSendReset(cap: usize) void {
+    test_send_cap = cap;
+    test_send_len = 0;
+}
+
+fn testSendLimited(data: [*]const u8, data_len: usize) callconv(.c) isize {
+    if (test_send_cap == 0) return 0;
+    const n = @min(data_len, test_send_cap);
+    if (test_send_len + n > test_send_buf.len) return -1;
+    @memcpy(test_send_buf[test_send_len..][0..n], data[0..n]);
+    test_send_len += n;
+    test_send_cap -= n;
+    return @intCast(n);
+}
+
+fn testSendErr(_: [*]const u8, _: usize) callconv(.c) isize {
+    return -1;
+}
+
+test "tx ring rejects invalid record bounds" {
+    testReset();
+
+    try std.testing.expect(!enqueue("", "x"));
+    try std.testing.expectEqual(@as(u32, 1), dropped);
+
+    var subject_too_long: [SUBJ_MAX + 1]u8 = undefined;
+    @memset(&subject_too_long, 's');
+    try std.testing.expect(!enqueue(&subject_too_long, "x"));
+    try std.testing.expectEqual(@as(u32, 2), dropped);
+
+    var payload_too_long: [PAYLOAD_MAX + 1]u8 = undefined;
+    @memset(&payload_too_long, 'p');
+    try std.testing.expect(!enqueue("s", &payload_too_long));
+    try std.testing.expectEqual(@as(u32, 3), dropped);
+
+    var subject_max: [SUBJ_MAX]u8 = undefined;
+    var payload_max: [PAYLOAD_MAX]u8 = undefined;
+    @memset(&subject_max, 's');
+    @memset(&payload_max, 'p');
+    try std.testing.expect(enqueue(&subject_max, &payload_max));
+    try std.testing.expectEqual(@as(usize, 1), count());
+    try std.testing.expect(used() <= capacity());
+}
+
+test "tx ring evicts oldest records when full" {
+    testReset();
+
+    var payload: [PAYLOAD_MAX]u8 = undefined;
+    @memset(&payload, 'x');
+    var inserted: usize = 0;
+    while (inserted < 200) : (inserted += 1) {
+        payload[0] = @intCast('A' + (inserted % 26));
+        try std.testing.expect(enqueue("s", &payload));
+    }
+
+    try std.testing.expect(dropped > 0);
+    try std.testing.expect(count() < inserted);
+    try std.testing.expect(used() <= capacity());
+
+    var rec: DrainRecord = undefined;
+    try std.testing.expect(copyHeadForDrain(&rec));
+    drain_pinned = false;
+    try std.testing.expect(rec.payload[0] != 'A');
+}
+
+test "tx ring resumes a partial NATS frame" {
+    testReset();
+    try std.testing.expect(enqueue("s", "abc"));
+
+    testSendReset(8);
+    drain(&testSendLimited);
+    try std.testing.expectEqual(@as(usize, 1), count());
+    try std.testing.expectEqual(@as(usize, 8), record_bytes_sent);
+
+    test_send_cap = 64;
+    drain(&testSendLimited);
+    try std.testing.expectEqual(@as(usize, 0), count());
+    try std.testing.expectEqualStrings("PUB s 3\r\nabc\r\n", test_send_buf[0..test_send_len]);
+}
+
+test "tx ring can restart an in-flight record after reconnect" {
+    testReset();
+    try std.testing.expect(enqueue("s", "abc"));
+
+    testSendReset(8);
+    drain(&testSendLimited);
+    tinyblok_tx_ring_reset_in_flight();
+
+    testSendReset(64);
+    drain(&testSendLimited);
+    try std.testing.expectEqual(@as(usize, 0), count());
+    try std.testing.expectEqualStrings("PUB s 3\r\nabc\r\n", test_send_buf[0..test_send_len]);
+}
+
+test "tx ring keeps a record queued after send error" {
+    testReset();
+    try std.testing.expect(enqueue("s", "abc"));
+
+    drain(&testSendErr);
+    try std.testing.expectEqual(@as(usize, 1), count());
+    try std.testing.expectEqual(@as(usize, 0), record_bytes_sent);
+}
+
+test "tx ring handles wraparound slack" {
+    testReset();
+
+    var payload: [PAYLOAD_MAX]u8 = undefined;
+    @memset(&payload, 'x');
+    for (0..80) |_| {
+        try std.testing.expect(enqueue("s", &payload));
+    }
+    for (0..40) |_| testDropOne();
+
+    for (0..80) |_| {
+        try std.testing.expect(enqueue("s", &payload));
+    }
+
+    try std.testing.expect(slack_at_end > 0);
+    try std.testing.expect(used() <= capacity());
+    try std.testing.expect(count() > 0);
+
+    testSendReset(100_000);
+    drain(&testSendLimited);
+    try std.testing.expectEqual(@as(usize, 0), count());
 }

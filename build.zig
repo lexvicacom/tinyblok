@@ -30,4 +30,12 @@ pub fn build(b: *std.Build) void {
 
     const soundcheck_step = b.step("soundcheck", "Build the host patchbay debugger CLI");
     soundcheck_step.dependOn(&install_soundcheck.step);
+
+    const soundcheck_tests = b.addTest(.{
+        .root_module = soundcheck_mod,
+    });
+    const run_soundcheck_tests = b.addRunArtifact(soundcheck_tests);
+
+    const soundcheck_test_step = b.step("soundcheck-test", "Run host checks against generated rules.zig");
+    soundcheck_test_step.dependOn(&run_soundcheck_tests.step);
 }

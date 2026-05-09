@@ -63,6 +63,20 @@ make sync-kernel-remote # fetch kernel.zig from GitHub
 - Avoid `std.heap.GeneralPurposeAllocator` in runtime firmware; its metadata and failure behavior are a poor fit for small deterministic hot paths.
 - Use heap allocation only at boot/config boundaries, not per pump tick, per publish, or per clock fire.
 
+## Firmware Style
+
+Borrow the embedded-relevant parts of TigerBeetle's Tiger Style, adapted to Tinyblok rather than copied wholesale:
+
+- Bound all runtime work. Loops, queues, payloads, subjects, sample windows, reconnect attempts, and generated-rule walks should have clear upper limits.
+- Keep pump/timer/publish paths deterministic. Do not allocate, block unexpectedly, recurse, or do unbounded parsing in hot paths.
+- Prefer explicit integer widths for protocol, wire-format, sensor, timing, and C/Zig ABI values. Avoid `usize` where the value has a physical or protocol size.
+- Name values with units or capacity meaning where it prevents mistakes: `period_ms`, `payload_len`, `subject_len_max`, `publish_count`, `samples_cap`.
+- Assert invariants at subsystem boundaries: generated rule shape, ring indexes/counts, payload lengths, subject lengths, ABI type sizes, and impossible enum states.
+- Handle every operating error explicitly. ESP-IDF errors, socket/TLS failures, auth failures, short reads/writes, sensor failures, and publish drops should be logged or surfaced intentionally.
+- Keep control flow simple around external events. Let Wi-Fi, driver, timer, and NATS callbacks enqueue or signal work; keep substantial policy in code that runs at Tinyblok's own pace.
+- Be conservative with new dependencies. ESP-IDF and vendored support code are already enough surface area; add dependencies only when the reliability or maintenance win is clear.
+- Treat large functions, compound conditions, and unclear negations as review smells. Split only when the resulting shape makes state, bounds, and error handling easier to verify.
+
 ## Build Notes
 
 `main/CMakeLists.txt` intentionally lists optional sources eagerly, then applies Kconfig conditionals after `idf_component_register` with `target_sources` and `idf_component_optional_requires`. ESP-IDF's component manager parses the registration call greedily.

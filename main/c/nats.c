@@ -2,9 +2,11 @@
 // auth none / user+pass / .creds (JWT + Ed25519 nonce sig).
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -54,6 +56,7 @@ static int tls_inited = 0;
 
 #define NET_OPEN() (sock >= 0)
 #define NATS_SUBJECT_MAX 128
+#define NATS_MSG_PAYLOAD_MAX 64
 
 static char rx_buf[768];
 static size_t rx_len = 0;
@@ -574,7 +577,8 @@ typedef struct
     size_t payload_len;
 } nats_msg_t;
 
-static int parse_size(const char *p, size_t len, size_t *out)
+// Returns 0 on success, -1 on malformed input, -2 on overflow or cap exceed.
+static int parse_size(const char *p, size_t len, size_t max, size_t *out)
 {
     if (len == 0)
         return -1;
@@ -583,7 +587,12 @@ static int parse_size(const char *p, size_t len, size_t *out)
     {
         if (p[i] < '0' || p[i] > '9')
             return -1;
-        v = v * 10 + (size_t)(p[i] - '0');
+        size_t digit = (size_t)(p[i] - '0');
+        if (v > (SIZE_MAX - digit) / 10)
+            return -2;
+        v = v * 10 + digit;
+        if (v > max)
+            return -2;
     }
     *out = v;
     return 0;
@@ -621,16 +630,20 @@ static int parse_msg_line(char *line, size_t line_len, nats_msg_t *msg)
 
     msg->subject = (const unsigned char *)tok[0];
     msg->subject_len = tok_len[0];
+    if (msg->subject_len == 0 || msg->subject_len > NATS_SUBJECT_MAX)
+        return -2;
     if (ntok == 3)
     {
         msg->reply = (const unsigned char *)"";
         msg->reply_len = 0;
-        return parse_size(tok[2], tok_len[2], &msg->payload_len);
+        return parse_size(tok[2], tok_len[2], NATS_MSG_PAYLOAD_MAX, &msg->payload_len);
     }
 
     msg->reply = (const unsigned char *)tok[2];
     msg->reply_len = tok_len[2];
-    return parse_size(tok[3], tok_len[3], &msg->payload_len);
+    if (msg->reply_len == 0 || msg->reply_len > NATS_SUBJECT_MAX)
+        return -2;
+    return parse_size(tok[3], tok_len[3], NATS_MSG_PAYLOAD_MAX, &msg->payload_len);
 }
 
 void tinyblok_nats_drain_rx(void)
@@ -670,14 +683,21 @@ void tinyblok_nats_drain_rx(void)
         if (line_len >= 4 && memcmp(line, "MSG ", 4) == 0)
         {
             nats_msg_t msg;
-            if (parse_msg_line(line, line_len, &msg) != 0)
+            int parse_rc = parse_msg_line(line, line_len, &msg);
+            if (parse_rc != 0)
             {
-                ESP_LOGW(TAG, "malformed MSG line");
-                scan += line_len + 2;
-                continue;
+                ESP_LOGW(TAG, "%s", parse_rc == -2 ? "oversized MSG line" : "malformed MSG line");
+                close_sock(1);
+                return;
             }
 
             size_t payload_off = line_len + 2;
+            if (payload_off > SIZE_MAX - msg.payload_len - 2)
+            {
+                ESP_LOGW(TAG, "MSG frame length overflow");
+                close_sock(1);
+                return;
+            }
             size_t frame_len = payload_off + msg.payload_len + 2;
             if (remaining < frame_len)
                 break;

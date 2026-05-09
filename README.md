@@ -165,10 +165,24 @@ Use the top-level [`Makefile`](./Makefile):
 make gen
 make soundcheck
 make test
+make nats-host-smoke
 make build
 make flash
 make monitor
 make menuconfig
+```
+
+`make nats-host-smoke` exercises the host-built C NATS client against a local
+broker. It starts `nats-server` on `127.0.0.1:4223`, verifies request/reply on
+`tinyblok.req.ping`, then verifies a five-message publish batch on
+`tinyblok.host.pub`.
+
+It needs `nats-server`, the `nats` CLI, and `zig cc` in `PATH`. Override the
+test broker port with `NATS_HOST_PORT` if `4223` is already in use:
+
+```sh
+make nats-host-smoke
+make nats-host-smoke NATS_HOST_PORT=4224
 ```
 
 <img width="1784" height="1302" alt="ESP-IDF menuconfig tinyblok Wi-Fi and NATS settings" src="./docs/conf.png" />
