@@ -32,6 +32,8 @@ pipeline ops (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `sign`),
 `quantize`, `clamp`, `throttle`, `hold-off`, edge gates, `publish!`,
 `count!`, `bar!`, `sample!`, `debounce!`, `on-req`, and `reply!`.
 
+![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
+
 Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `aggregate!`, JSON forms, string/subject builders beyond publish-target
 `subject-append`, `rate`, `percentile`, `median`, `stddev`, `variance`,
