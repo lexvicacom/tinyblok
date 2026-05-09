@@ -67,14 +67,14 @@ A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
 (pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)
 ```
 
-Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig.
+After you add the implementation and the [patchbay.edn](./patchbay.edn) declaration, there is no other pump registration step. Codegen declares the function for Zig and adds it to the generated pump table consumed by C. [main/c/drivers.c](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig.
 
 Put small user-owned implementations in one of the files already wired into the build:
 
 - C/ESP-IDF-facing code: [`main/c/user.c`](./main/c/user.c)
 - dependency-free Zig code: [`main/zig/user.zig`](./main/zig/user.zig)
 
-Then reference the exported symbol from [`patchbay.edn`](./patchbay.edn). There is no separate runtime registry; `(pump ...)` registers a timed source, `(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a NATS request subject. `make gen` turns those declarations into generated Zig `extern fn` declarations and call sites in `main/zig/rules.zig`; you do not hand-write the externs. The linker checks that every named C/Zig symbol exists.
+Then reference the exported symbol from [patchbay.edn](./patchbay.edn). There is no separate runtime registry; `(pump ...)` registers a timed source, `(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a NATS request subject. `make gen` turns those declarations into generated Zig `extern fn` declarations and call sites in [main/zig/rules.zig](./main/zig/rules.zig); you do not hand-write the externs. The linker checks that every named C/Zig symbol exists.
 
 Pump source shapes are zero-argument reads:
 
