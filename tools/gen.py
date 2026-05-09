@@ -951,6 +951,14 @@ class Emitter:
             out.append("}\n\n")
 
         out.append(
+            "const dispatch_entries = .{\n"
+        )
+        for filt in seen:
+            fn_name = _filter_to_fn_name(filt)
+            out.append(f'    .{{ .subject = "{filt}", .handler = {fn_name} }},\n')
+        out.append(
+            "};\n"
+            "\n"
             "fn eql(a: []const u8, b: []const u8) bool {\n"
             "    if (a.len != b.len) return false;\n"
             "    var i: usize = 0;\n"
@@ -981,15 +989,14 @@ class Emitter:
             "    if (depth == 0) pb.emit(subj_z, payload);\n"
             "    const v: f64 = strtod(pl_z, null);\n"
             "\n"
+            "    inline for (dispatch_entries) |entry| {\n"
+            "        if (eql(subject, entry.subject)) {\n"
+            "            entry.handler(v, payload, depth);\n"
+            "            return;\n"
+            "        }\n"
+            "    }\n"
         )
-
-        for i, filt in enumerate(seen):
-            fn_name = _filter_to_fn_name(filt)
-            kw = "if" if i == 0 else "} else if"
-            out.append(
-                f'    {kw} (eql(subject, "{filt}")) {{\n        {fn_name}(v, payload, depth);\n'
-            )
-        out.append("    }\n}\n")
+        out.append("}\n")
 
         out.append(self._render_requests())
 
@@ -1002,6 +1009,14 @@ class Emitter:
     def _render_requests(self) -> str:
         out: list[str] = []
         out.append(
+            "\n"
+            "const request_entries = .{\n"
+        )
+        for req in self.reqs:
+            fn_name = _request_to_fn_name(req.subject)
+            out.append(f'    .{{ .subject = "{req.subject}", .handler = {fn_name} }},\n')
+        out.append(
+            "};\n"
             "\n"
             "export fn tinyblok_nats_handle_msg(\n"
             "    subject_ptr: [*]const u8,\n"
@@ -1022,15 +1037,13 @@ class Emitter:
             "    const pl_z: [*:0]const u8 = @ptrCast(&pl_buf);\n"
             "    const v: f64 = strtod(pl_z, null);\n"
             "\n"
+            "    inline for (request_entries) |entry| {\n"
+            "        if (eql(subject, entry.subject)) {\n"
+            "            entry.handler(v, payload, reply_subject);\n"
+            "            return;\n"
+            "        }\n"
+            "    }\n"
         )
-        for i, req in enumerate(self.reqs):
-            fn_name = _request_to_fn_name(req.subject)
-            kw = "if" if i == 0 else "} else if"
-            out.append(
-                f'    {kw} (eql(subject, "{req.subject}")) {{\n        {fn_name}(v, payload, reply_subject);\n'
-            )
-        if self.reqs:
-            out.append("    }\n")
         out.append("}\n\n")
 
         out.append(
