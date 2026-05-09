@@ -6,7 +6,7 @@ ESP-IDF firmware for ESP32. It runs a tiny patchbay on-device and conditioned ou
 
 - Connects to Wi-Fi, then NATS over TCP or TLS.
 - Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
-- Publishes heap, RSSI, uptime, and temperature-derived subjects from [`patchbay.edn`](./patchbay.edn).
+- Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
 - You can configure Wi-Fi and NATS details with `make menuconfig`; ESP-IDF writes them to local `sdkconfig`.
 - Run `make build flash`, then `make monitor` to try it on hardware.
 
@@ -57,11 +57,11 @@ by default, so `sample!`, `debounce!`, and wall-clock `bar!` rules can still
 fire after piped input closes. Use `--linger-ms N` to change that window, or
 `--linger-ms 0` to exit immediately after EOF.
 
-See [`guide.md`](./guide.md) for the standalone `soundcheck` guide.
+See [guide.md](./guide.md) for the standalone `soundcheck` guide.
 
 ## Drivers
 
-A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
+A driver is just a function named from [patchbay.edn](./patchbay.edn):
 
 ```clojure
 (pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)
@@ -71,8 +71,8 @@ After you add the implementation and the [patchbay.edn](./patchbay.edn) declarat
 
 Put small user-owned implementations in one of the files already wired into the build:
 
-- C/ESP-IDF-facing code: [`main/c/user.c`](./main/c/user.c)
-- dependency-free Zig code: [`main/zig/user.zig`](./main/zig/user.zig)
+- C/ESP-IDF-facing code: [main/c/user.c](./main/c/user.c)
+- dependency-free Zig code: [main/zig/user.zig](./main/zig/user.zig)
 
 Then reference the exported symbol from [patchbay.edn](./patchbay.edn). There is no separate runtime registry; `(pump ...)` registers a timed source, `(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a NATS request subject. `make gen` turns those declarations into generated Zig `extern fn` declarations and call sites in [main/zig/rules.zig](./main/zig/rules.zig); you do not hand-write the externs. The linker checks that every named C/Zig symbol exists.
 
@@ -163,23 +163,23 @@ nats req tinyblok.req.hello-zig tinyhi
 
 ### How it fits together
 
-[`tools/gen.py`](./tools/gen.py) compiles [`patchbay.edn`](./patchbay.edn) into [`main/zig/rules.zig`](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
+[tools/gen.py](./tools/gen.py) compiles [patchbay.edn](./patchbay.edn) into [main/zig/rules.zig](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
 
-The reusable ops live in [`main/zig/kernel.zig`](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
+The reusable ops live in [main/zig/kernel.zig](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
 ## TX ring
 
-[`main/zig/tx_ring.zig`](./main/zig/tx_ring.zig) sits between rule eval and the NATS socket. `publish!` queues a subject/payload record; [`main/zig/main.zig`](./main/zig/main.zig) drains it through [`main/c/nats.c`](./main/c/nats.c). If Wi-Fi or the broker stalls, the ring drops the oldest samples rather than blocking rule evaluation.
+[main/zig/tx_ring.zig](./main/zig/tx_ring.zig) sits between rule eval and the NATS socket. `publish!` queues a subject/payload record; [main/zig/main.zig](./main/zig/main.zig) drains it through [main/c/nats.c](./main/c/nats.c). If Wi-Fi or the broker stalls, the ring drops the oldest samples rather than blocking rule evaluation.
 
 ## Why C and Zig
 
-[`main/c/stub.c`](./main/c/stub.c), [`main/c/nats.c`](./main/c/nats.c), [`main/c/drivers.c`](./main/c/drivers.c), and [`main/c/sources.c`](./main/c/sources.c) own the ESP-IDF surface: Wi-Fi, NVS, sockets, TLS, timers, events, and sensors. Zig owns the portable patchbay path: generated rules, op kernels, and the publish queue.
+[main/c/stub.c](./main/c/stub.c), [main/c/nats.c](./main/c/nats.c), [main/c/drivers.c](./main/c/drivers.c), and [main/c/sources.c](./main/c/sources.c) own the ESP-IDF surface: Wi-Fi, NVS, sockets, TLS, timers, events, and sensors. Zig owns the portable patchbay path: generated rules, op kernels, and the publish queue.
 
 That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`.
 
 ## make commands
 
-Use the top-level [`Makefile`](./Makefile):
+Use the top-level [Makefile](./Makefile):
 
 ```sh
 make gen
@@ -207,4 +207,4 @@ make nats-host-smoke NATS_HOST_PORT=4224
 
 <img width="1784" height="1302" alt="ESP-IDF menuconfig tinyblok Wi-Fi and NATS settings" src="./docs/conf.png" />
 
-Checked-in defaults belong in [`sdkconfig.defaults`](./sdkconfig.defaults); local choices live in `sdkconfig`. Real secrets do not: use [`secrets/nats.creds.example`](./secrets/nats.creds.example) as the local `.creds` template.
+Checked-in defaults belong in [sdkconfig.defaults](./sdkconfig.defaults); local choices live in `sdkconfig`. Real secrets do not: use [secrets/nats.creds.example](./secrets/nats.creds.example) as the local `.creds` template.
