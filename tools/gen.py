@@ -115,7 +115,7 @@ def _parse_one(t, it: Iterator) -> Node:
 @dataclass
 class Slot:
     name: str
-    kind: str  # deadband | squelch | moving_avg_tick | rising_edge | falling_edge | throttle_ms | bar_tick | bar_time | sample | debounce
+    kind: str  # deadband | squelch | changed | delta | moving_avg_tick | rising_edge | falling_edge | throttle_ms | hold_off_ms | bar_tick | bar_time | sample | debounce
     arg: float
     # Clock slots: target subject or subject prefix for generated emits.
     subject: str = ""
@@ -399,6 +399,16 @@ class Emitter:
                 out.append(
                     f": f64 = state.{slot}.update(__v{in_var}) orelse break :blk;\n"
                 )
+            case "changed?":
+                slot = self.add_slot("changed", "ch", 0)
+                out.append(
+                    f": f64 = if (state.{slot}.update(__v{in_var})) __v{in_var} else break :blk;\n"
+                )
+            case "delta":
+                if len(op_list) != 1:
+                    raise SyntaxError("delta takes no args")
+                slot = self.add_slot("delta", "dl", 0)
+                out.append(f": f64 = state.{slot}.update(__v{in_var});\n")
             case "moving-avg" | "moving-sum" | "moving-max" | "moving-min":
                 # (moving-* N) tick window or (moving-* :ms N) approximated at 10 Hz.
                 first = op_list[1]
@@ -435,6 +445,12 @@ class Emitter:
                 out.append(
                     f": f64 = state.{slot}.update(__v{in_var}, tinyblok_uptime_us()) orelse break :blk;\n"
                 )
+            case "hold-off":
+                ms = _expect_kwd_num(op_list[1:], "ms")
+                slot = self.add_slot("hold_off_ms", "ho", ms)
+                out.append(
+                    f": f64 = if (state.{slot}.update(@as(f64, @floatFromInt(tinyblok_now_ms())))) __v{in_var} else break :blk;\n"
+                )
             case "round":
                 decimals = _expect_num(op_list[1])
                 if decimals == 0:
@@ -444,6 +460,18 @@ class Emitter:
                     out.append(
                         f": f64 = @round(__v{in_var} * {_zig_num(scale)}) / {_zig_num(scale)};\n"
                     )
+            case "abs":
+                if len(op_list) != 1:
+                    raise SyntaxError("abs takes no args")
+                out.append(f": f64 = @abs(__v{in_var});\n")
+            case "sign":
+                if len(op_list) != 1:
+                    raise SyntaxError("sign takes no args")
+                out.append(
+                    f": f64 = if (__v{in_var} > 0) 1 else if (__v{in_var} < 0) -1 else 0;\n"
+                )
+            case "min" | "max" | "+" | "-" | "*" | "/":
+                self._emit_arithmetic_op(out, head, op_list, in_var)
             case "rising-edge":
                 slot = self.add_slot("rising_edge", "re", 0)
                 out.append(f": bool = state.{slot}.update(__v{in_var} != 0);\n")
@@ -457,6 +485,29 @@ class Emitter:
                 if fn is None:
                     raise SyntaxError(f"unsupported Tinyblok patchbay op: {head}")
                 self._emit_scalar_fn_op(out, fn, op_list, in_var)
+
+    def _emit_arithmetic_op(self, out: list[str], head: str, op_list: list, in_var: int) -> None:
+        if len(op_list) != 2:
+            raise SyntaxError(f"{head} takes exactly one arg in ->")
+        rhs = self._value_expr(op_list[1])
+        lhs = f"__v{in_var}"
+        match head:
+            case "min":
+                out.append(f": f64 = @min({lhs}, {rhs});\n")
+            case "max":
+                out.append(f": f64 = @max({lhs}, {rhs});\n")
+            case "+":
+                out.append(f": f64 = {lhs} + {rhs};\n")
+            case "-":
+                out.append(f": f64 = {lhs} - {rhs};\n")
+            case "*":
+                out.append(f": f64 = {lhs} * {rhs};\n")
+            case "/":
+                if isinstance(op_list[1], float) and op_list[1] == 0:
+                    raise SyntaxError("/ divisor must be non-zero")
+                out.append(f": f64 = {lhs} / {rhs};\n")
+            case _:
+                raise AssertionError(head)
 
     def _emit_scalar_fn_op(self, out: list[str], fn: Function, op_list: list, in_var: int) -> None:
         if len(op_list) != 1:
@@ -808,6 +859,10 @@ class Emitter:
                     )
                 case "squelch":
                     out.append(f"    {slot.name}: pb.Squelch = .{{}},\n")
+                case "changed":
+                    out.append(f"    {slot.name}: pb.Changed = .{{}},\n")
+                case "delta":
+                    out.append(f"    {slot.name}: pb.Delta = .{{}},\n")
                 case "moving_avg_tick":
                     out.append(
                         f"    {slot.name}: pb.MovingAvg({int(slot.arg)}) = .{{}},\n"
@@ -831,6 +886,10 @@ class Emitter:
                 case "throttle_ms":
                     out.append(
                         f"    {slot.name}: pb.Throttle = .{{ .interval_us = {int(slot.arg)} }},\n"
+                    )
+                case "hold_off_ms":
+                    out.append(
+                        f"    {slot.name}: pb.HoldOff = .{{ .interval_ms = {_zig_num(slot.arg)} }},\n"
                     )
                 case "bar_tick":
                     out.append(
@@ -1113,7 +1172,9 @@ def _thread_has_break(ops: list) -> bool:
         if isinstance(head, Sym) and head in (
             "deadband",
             "squelch",
+            "changed?",
             "throttle",
+            "hold-off",
             "rising-edge",
             "falling-edge",
         ):

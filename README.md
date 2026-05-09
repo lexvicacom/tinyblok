@@ -26,16 +26,16 @@ and fleet-management features are outside the current scope.
 ### What's there and not there
 
 Tinyblok intentionally implements a static, numeric subset of monoblok's
-patchbay. Supported forms include `when`, `->`, comparisons, `deadband`,
-`squelch`, `moving-*`, `round`, `quantize`, `clamp`, `throttle`, edge
-gates, `publish!`, `count!`, `bar!`, `sample!`, `debounce!`, `on-req`,
-and `reply!`.
+patchbay. Supported forms include `when`, `->`, comparisons, arithmetic
+pipeline ops (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `sign`),
+`deadband`, `squelch`, `changed?`, `delta`, `moving-*`, `round`,
+`quantize`, `clamp`, `throttle`, `hold-off`, edge gates, `publish!`,
+`count!`, `bar!`, `sample!`, `debounce!`, `on-req`, and `reply!`.
 
 Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `aggregate!`, JSON forms, string/subject builders beyond publish-target
-`subject-append`, general arithmetic, `changed?`, `delta`, `hold-off`,
-`rate`, `percentile`, `median`, `stddev`, `variance`, `min`, `max`,
-`abs`, `sign`, `lvc`, and `bridge`.
+`subject-append`, `rate`, `percentile`, `median`, `stddev`, `variance`,
+`lvc`, and `bridge`.
 
 >This does not mean never - some are trivial, some make no sense to even bother with (bridge, for instance is implicit). Others are tricky due to static code gen.
 

@@ -13,6 +13,7 @@ pub const Squelch = kernel.Squelch;
 pub const Deadband = kernel.Deadband;
 pub const Changed = kernel.Changed;
 pub const Delta = kernel.Delta;
+pub const HoldOff = kernel.HoldOff;
 pub const RisingEdge = kernel.RisingEdge;
 pub const FallingEdge = kernel.FallingEdge;
 pub const MovingAvg = kernel.MovingAvg;
