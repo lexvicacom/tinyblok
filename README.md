@@ -67,7 +67,23 @@ A driver is just a function named from [`patchbay.edn`](./patchbay.edn):
 (pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)
 ```
 
-Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig. Use C for IDF-heavy sources, Zig for dependency-free ones.
+Codegen declares the function for Zig and adds it to a C pump table. [`main/c/drivers.c`](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig.
+
+Put small user-owned implementations in one of the files already wired into the build:
+
+- C/ESP-IDF-facing code: [`main/c/user.c`](./main/c/user.c)
+- dependency-free Zig code: [`main/zig/user.zig`](./main/zig/user.zig)
+
+Then reference the exported symbol from [`patchbay.edn`](./patchbay.edn). There is no separate runtime registry; `(pump ...)` registers a timed source, `(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a NATS request subject. `make gen` turns those declarations into generated Zig `extern fn` declarations and call sites in `main/zig/rules.zig`; you do not hand-write the externs. The linker checks that every named C/Zig symbol exists.
+
+Pump source shapes are zero-argument reads:
+
+| `:type` | C shape | Zig shape |
+| --- | --- | --- |
+| `u32` | `uint32_t name(void)` | `export fn name() callconv(.c) u32` |
+| `i32` | `int name(void)` | `export fn name() callconv(.c) c_int` |
+| `f32` | `float name(void)` | `export fn name() callconv(.c) f32` |
+| `u64` / `uptime-s` | `uint64_t name(void)` | `export fn name() callconv(.c) u64` |
 
 Request handlers can also call registered functions:
 
@@ -77,6 +93,10 @@ Request handlers can also call registered functions:
 (on-req "tinyblok.req.hello-c"
   (reply! (hello-c payload)))
 ```
+
+An `on-req` handler is patchbay code, not another compiled symbol. Declare any
+C/Zig helper it needs with `(fn ...)`, then call that DSL name inside the
+handler.
 
 Registered function `:type` describes the return value. Optional `:input`
 describes whether the function receives the current threaded value or request

@@ -2,6 +2,7 @@ const tx_ring = @import("tx_ring.zig");
 
 comptime {
     _ = @import("rules.zig");
+    _ = @import("user.zig");
 }
 
 extern fn vTaskDelay(ticks: u32) void;

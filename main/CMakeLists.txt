@@ -2,7 +2,7 @@
 # this call eagerly, so conditionals that depend on Kconfig values must be
 # applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
-    SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/creds.c"
+    SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c"
     INCLUDE_DIRS "c"
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_wifi esp_event esp_netif nvs_flash lwip
 )
@@ -41,6 +41,7 @@ set(PATCHBAY_EDN ${CMAKE_SOURCE_DIR}/patchbay.edn)
 set(GEN_RULES ${CMAKE_CURRENT_SOURCE_DIR}/zig/rules.zig)
 set(ZIG_DEPS
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/main.zig
+    ${CMAKE_CURRENT_SOURCE_DIR}/zig/user.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/patchbay.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/kernel.zig
     ${GEN_RULES}

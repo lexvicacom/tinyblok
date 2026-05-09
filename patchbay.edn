@@ -1,7 +1,11 @@
 ;; tinyblok.* — C6 board test
 
-;; each (pump ...) generates an extern fn decl and a call site in
-;; collect().
+;; Each (pump ...) registers a compiled C/Zig symbol as a timed source. Each
+;; (fn ...) registers a compiled C/Zig symbol callable from rules or (on-req).
+;; Each (on-req ...) registers a NATS request subject and runs patchbay code.
+;;
+;; Put user-owned implementations in main/c/user.c or main/zig/user.zig, then
+;; name the exported symbol in :from.
 
 (pump "tinyblok.heap"   :from tinyblok_free_heap    :type u32      :hz 10)
 (pump "tinyblok.rssi"   :from tinyblok_wifi_rssi    :type i32      :hz 10)
