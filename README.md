@@ -1,6 +1,8 @@
 # tinyblok
 
-ESP-IDF firmware for ESP32. It runs a tiny patchbay on-device and conditioned output to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok). [Intro blog post](https://alexjreid.dev/posts/tinyblok/).
+ESP-IDF firmware for ESP32. It runs a tiny patchbay on-device and conditioned output to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
+
+![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
 ## Status
 
@@ -31,8 +33,6 @@ pipeline ops (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `sign`),
 `deadband`, `squelch`, `changed?`, `delta`, `moving-*`, `round`,
 `quantize`, `clamp`, `throttle`, `hold-off`, edge gates, `publish!`,
 `count!`, `bar!`, `sample!`, `debounce!`, `on-req`, and `reply!`.
-
-![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
 Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `aggregate!`, JSON forms, string/subject builders beyond publish-target
