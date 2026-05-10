@@ -1,6 +1,6 @@
 # tinyblok
 
-ESP-IDF firmware for ESP32. It runs a tiny patchbay on-device and conditioned output to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
+ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes conditioned sensor streams to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
 
 ![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
@@ -39,14 +39,14 @@ Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
 `subject-append`, `rate`, `percentile`, `median`, `stddev`, `variance`,
 `lvc`, and `bridge`.
 
->This does not mean never - some are trivial, some make no sense to even bother with (bridge, for instance is implicit). Others are tricky due to static code gen.
+> This does not mean never - some are trivial, some make no sense to even bother with (bridge, for instance is implicit). Others are tricky due to static code gen.
 
 ### Soundcheck
 
-Running `bin/soundcheck` builds a native host CLI from the generated patchbay. It
-reads newline-delimited `SUBJECT|payload` messages on stdin and writes emitted
-messages to stdout in the same shape. Top-level inputs are passed through
-first, followed by any patchbay emits:
+Running `make soundcheck` builds a native host CLI from the generated patchbay
+at `./soundcheck`. It reads newline-delimited `SUBJECT|payload` messages on
+stdin and writes emitted messages to stdout in the same shape. Top-level inputs
+are passed through first, followed by any patchbay emits:
 
 ```sh
 printf 'tinyblok.temp|31\n' | ./soundcheck
@@ -76,7 +76,17 @@ Put small user-owned implementations in one of the files already wired into the 
 - C/ESP-IDF-facing code: [main/c/user.c](./main/c/user.c)
 - dependency-free Zig code: [main/zig/user.zig](./main/zig/user.zig)
 
-Then reference the exported symbol from [patchbay.edn](./patchbay.edn). There is no separate runtime registry; `(pump ...)` registers a timed source, `(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a NATS request subject. `make gen` turns those declarations into generated Zig `extern fn` declarations and call sites in [main/zig/rules.zig](./main/zig/rules.zig); you do not hand-write the externs. The linker checks that every named C/Zig symbol exists.
+Shared dependency-free byte helpers live in
+[main/zig/bytes.zig](./main/zig/bytes.zig). Keep ESP-IDF-heavy code in C; keep
+`main/zig/user.zig` for bounded helpers that do not need IDF APIs.
+
+Then reference the exported symbol from [patchbay.edn](./patchbay.edn). There
+is no separate runtime registry; `(pump ...)` registers a timed source,
+`(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a
+NATS request subject. `make gen` turns those declarations into formatted
+generated Zig `extern fn` declarations and call sites in
+[main/zig/rules.zig](./main/zig/rules.zig); you do not hand-write the externs.
+The linker checks that every named C/Zig symbol exists.
 
 Pump source shapes are zero-argument reads:
 
@@ -116,6 +126,13 @@ For byte functions, codegen passes `payload_ptr`, `payload_len`, `out_ptr`, and
 `out_len`; the function returns the number of reply bytes written. For scalar
 input functions, codegen converts the current threaded `f64` into the declared
 input type and formats the scalar return value.
+
+For example, [patchbay.edn](./patchbay.edn) declares `hello-zig` with
+`:from tinyblok_hello_zig`, and [main/zig/user.zig](./main/zig/user.zig)
+exports that exact symbol. [main/zig/main.zig](./main/zig/main.zig) imports
+`user.zig` so the firmware static library includes the export;
+[main/zig/soundcheck.zig](./main/zig/soundcheck.zig) does the same for the host
+CLI.
 
 ## Request/reply
 
@@ -165,7 +182,7 @@ nats req tinyblok.req.hello-zig tinyhi
 
 ### How it fits together
 
-[tools/gen.py](./tools/gen.py) compiles [patchbay.edn](./patchbay.edn) into [main/zig/rules.zig](./main/zig/rules.zig). The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
+[tools/gen.py](./tools/gen.py) compiles [patchbay.edn](./patchbay.edn) into [main/zig/rules.zig](./main/zig/rules.zig), then runs `zig fmt` on the generated file. The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
 
 The reusable ops live in [main/zig/kernel.zig](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
 
@@ -177,7 +194,7 @@ The reusable ops live in [main/zig/kernel.zig](./main/zig/kernel.zig). That file
 
 [main/c/stub.c](./main/c/stub.c), [main/c/nats.c](./main/c/nats.c), [main/c/drivers.c](./main/c/drivers.c), and [main/c/sources.c](./main/c/sources.c) own the ESP-IDF surface: Wi-Fi, NVS, sockets, TLS, timers, events, and sensors. Zig owns the portable patchbay path: generated rules, op kernels, and the publish queue.
 
-That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`.
+That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`. The host test path runs the vendored kernel test directly and runs `soundcheck-test`, which also exercises imported modules such as the TX ring.
 
 ## make commands
 
