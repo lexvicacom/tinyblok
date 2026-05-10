@@ -1,28 +1,12 @@
-// Ring of NATS PUB records shared by two FreeRTOS tasks: generated pump/event
-// handlers enqueue from the default esp_event task, while zig_main drains from
-// the main task. Ring metadata is protected by tinyblok_tx_ring_{lock,unlock};
-// drain copies one head record while locked, sends it without the lock, then
-// re-locks to commit progress.
+// Ring of NATS PUB records. The esp_event task enqueues; zig_main drains.
+// Metadata is protected by tinyblok_tx_ring_{lock,unlock}. Drain copies one
+// head record while locked, sends it without the lock, then re-locks to commit.
 //
-// We store records, not framed bytes. Each record is:
-//
+// Records are stored unframed:
 //   [u16 subject_len][u16 payload_len][subject_len bytes][payload_len bytes]
 //
-// The PUB header ("PUB <subject> <payload_len>\r\n") and trailing "\r\n" are
-// built on the stack at drain time. Subject bytes are copied into the ring at
-// enqueue time so callers don't have to manage subject lifetime — the ring is
-// fully self-contained.
-//
-// Drop-oldest on full: if a record won't fit, evict records starting from the
-// tail until it does. Right policy for live telemetry — broker comes back to a
-// catch-up of recent samples rather than 30 sec of stale data and nothing
-// current. The one in-progress record (record_bytes_sent > 0) is pinned and
-// never evicted, otherwise the broker would receive a truncated PUB followed
-// by a fresh one and close on the protocol violation.
-//
-// A record is never split across the wrap boundary: if it doesn't fit in the
-// contiguous tail-to-end region, head jumps to 0 and the tail bytes become
-// "slack" — accounted for separately so used_bytes only counts real records.
+// The oldest complete record is dropped on overflow. An in-progress send is
+// pinned, and records are never split across the wrap boundary.
 
 const std = @import("std");
 
@@ -42,9 +26,9 @@ var tail: usize = 0;
 var used_bytes: usize = 0; // record bytes only (excludes slack)
 var slack_at_end: usize = 0; // unused tail region created by wrap-around
 
-// Bytes of the current head record already pushed to the socket. Non-zero
-// means the head record is pinned (eviction would corrupt the wire stream).
-var record_bytes_sent: usize = 0;
+// Bytes of the current head record's NATS frame already pushed to the socket.
+// Non-zero means the head record is pinned.
+var frame_bytes_sent: usize = 0;
 var drain_pinned: bool = false;
 
 pub var dropped: u32 = 0;
@@ -77,7 +61,7 @@ export fn tinyblok_tx_ring_count() callconv(.c) usize {
 export fn tinyblok_tx_ring_reset_in_flight() callconv(.c) void {
     tinyblok_tx_ring_lock();
     defer tinyblok_tx_ring_unlock();
-    record_bytes_sent = 0;
+    frame_bytes_sent = 0;
 }
 
 /// Number of records currently buffered. Walks the ring; cheap (cap is 8 KiB).
@@ -105,19 +89,6 @@ fn countLocked() usize {
         n += 1;
     }
     return n;
-}
-
-/// Free space available without eviction. Equals contiguous space at head.
-fn freeContiguous() usize {
-    if (used_bytes == 0) {
-        return RING_CAP;
-    }
-    if (head > tail) {
-        return RING_CAP - head; // tail-to-end region; remaining `tail` bytes
-        //                         require wrapping head to 0
-    }
-    // head <= tail and we have data → wrapped layout
-    return tail - head;
 }
 
 /// Append a record. Evicts oldest records to make room if necessary.
@@ -169,7 +140,7 @@ fn tryWrite(subject: []const u8, payload: []const u8, need: usize) bool {
     }
 
     if (head > tail) {
-        // Linear layout: data is [tail .. head), free is [head .. RING_CAP) ∪ [0 .. tail).
+        // Linear layout: data is [tail .. head), free is [head .. RING_CAP) plus [0 .. tail).
         const tail_to_end = RING_CAP - head;
         if (need <= tail_to_end) {
             writeRecord(head, subject, payload);
@@ -215,7 +186,7 @@ fn evictOne() bool {
 
     // The tail record is the head of the FIFO; if drain has copied it or sent
     // part of it, it is pinned until drain commits progress.
-    if (drain_pinned or record_bytes_sent > 0) return false;
+    if (drain_pinned or frame_bytes_sent > 0) return false;
 
     const subj_len = readU16(tail);
     const pl_len = readU16(tail + 2);
@@ -282,15 +253,14 @@ pub fn drainDelimitedLabeled(writer: anytype, first_label: ?[]const u8, rest_lab
     while (true) {
         var rec: DrainRecord = undefined;
 
-        tinyblok_tx_ring_lock();
-        if (!copyHeadForDrain(&rec)) {
-            tinyblok_tx_ring_unlock();
-            return;
+        {
+            tinyblok_tx_ring_lock();
+            defer tinyblok_tx_ring_unlock();
+            if (!copyHeadForDrain(&rec)) return;
+            drain_pinned = false;
+            advance(rec.rec_size);
+            frame_bytes_sent = 0;
         }
-        drain_pinned = false;
-        advance(rec.rec_size);
-        record_bytes_sent = 0;
-        tinyblok_tx_ring_unlock();
 
         const label = if (first) first_label orelse rest_label else rest_label;
         first = false;
@@ -306,31 +276,30 @@ pub fn drainDelimitedLabeled(writer: anytype, first_label: ?[]const u8, rest_lab
 }
 
 /// Drain records into the socket. Stops on EAGAIN (try_send returns 0) or
-/// error (negative). Resumes mid-record via record_bytes_sent.
+/// error (negative). Resumes mid-frame via frame_bytes_sent.
 pub fn drain(try_send: TrySendFn) void {
     while (true) {
         var rec: DrainRecord = undefined;
 
-        tinyblok_tx_ring_lock();
-        if (!copyHeadForDrain(&rec)) {
-            tinyblok_tx_ring_unlock();
-            return;
+        {
+            tinyblok_tx_ring_lock();
+            defer tinyblok_tx_ring_unlock();
+            if (!copyHeadForDrain(&rec)) return;
         }
-        tinyblok_tx_ring_unlock();
 
         var hdr: [SUBJ_MAX + 32]u8 = undefined;
         const subject = rec.subject[0..rec.subject_len];
         const payload = rec.payload[0..rec.payload_len];
         const hdr_n = snprintf(&hdr, hdr.len, "PUB %.*s %u\r\n", @as(c_int, @intCast(rec.subject_len)), subject.ptr, @as(c_uint, @intCast(rec.payload_len)));
         if (hdr_n <= 0) {
-            tinyblok_tx_ring_lock();
-            advance(rec.rec_size);
-            record_bytes_sent = 0;
-            drain_pinned = false;
-            tinyblok_tx_ring_unlock();
+            dropCopiedRecord(rec.rec_size);
             continue;
         }
-        const hdr_len: usize = @min(@as(usize, @intCast(hdr_n)), hdr.len);
+        const hdr_len: usize = @intCast(hdr_n);
+        if (hdr_len >= hdr.len) {
+            dropCopiedRecord(rec.rec_size);
+            continue;
+        }
 
         var sent = rec.sent;
         var status = sendSegment(try_send, hdr[0..hdr_len], &sent, 0);
@@ -338,24 +307,22 @@ pub fn drain(try_send: TrySendFn) void {
         if (status == .complete) status = sendSegment(try_send, "\r\n", &sent, hdr_len + rec.payload_len);
 
         tinyblok_tx_ring_lock();
+        defer tinyblok_tx_ring_unlock();
         drain_pinned = false;
         switch (status) {
             .complete => {
                 advance(rec.rec_size);
-                record_bytes_sent = 0;
+                frame_bytes_sent = 0;
             },
             .blocked => {
-                record_bytes_sent = sent;
-                tinyblok_tx_ring_unlock();
+                frame_bytes_sent = sent;
                 return;
             },
             .err => {
-                record_bytes_sent = 0;
-                tinyblok_tx_ring_unlock();
+                frame_bytes_sent = 0;
                 return;
             },
         }
-        tinyblok_tx_ring_unlock();
     }
 }
 
@@ -371,7 +338,7 @@ fn copyHeadForDrain(out: *DrainRecord) bool {
     if (subj_len > SUBJ_MAX or pl_len > PAYLOAD_MAX or rec_size > used_bytes) {
         dropped += 1;
         advance(@min(rec_size, used_bytes));
-        record_bytes_sent = 0;
+        frame_bytes_sent = 0;
         drain_pinned = false;
         return false;
     }
@@ -383,7 +350,7 @@ fn copyHeadForDrain(out: *DrainRecord) bool {
     out.subject_len = subj_len;
     out.payload_len = pl_len;
     out.rec_size = rec_size;
-    out.sent = record_bytes_sent;
+    out.sent = frame_bytes_sent;
     drain_pinned = true;
     return true;
 }
@@ -393,6 +360,15 @@ fn normalizeTailSlack() void {
         tail = 0;
         slack_at_end = 0;
     }
+}
+
+fn dropCopiedRecord(rec_size: usize) void {
+    tinyblok_tx_ring_lock();
+    defer tinyblok_tx_ring_unlock();
+    advance(rec_size);
+    frame_bytes_sent = 0;
+    drain_pinned = false;
+    dropped += 1;
 }
 
 /// Send `slice` accounting for `sent.*` bytes already pushed across the whole
@@ -434,7 +410,7 @@ fn testReset() void {
     tail = 0;
     used_bytes = 0;
     slack_at_end = 0;
-    record_bytes_sent = 0;
+    frame_bytes_sent = 0;
     drain_pinned = false;
     dropped = 0;
 }
@@ -444,7 +420,7 @@ fn testDropOne() void {
     if (copyHeadForDrain(&rec)) {
         drain_pinned = false;
         advance(rec.rec_size);
-        record_bytes_sent = 0;
+        frame_bytes_sent = 0;
     }
 }
 
@@ -524,7 +500,7 @@ test "tx ring resumes a partial NATS frame" {
     testSendReset(8);
     drain(&testSendLimited);
     try std.testing.expectEqual(@as(usize, 1), count());
-    try std.testing.expectEqual(@as(usize, 8), record_bytes_sent);
+    try std.testing.expectEqual(@as(usize, 8), frame_bytes_sent);
 
     test_send_cap = 64;
     drain(&testSendLimited);
@@ -552,7 +528,7 @@ test "tx ring keeps a record queued after send error" {
 
     drain(&testSendErr);
     try std.testing.expectEqual(@as(usize, 1), count());
-    try std.testing.expectEqual(@as(usize, 0), record_bytes_sent);
+    try std.testing.expectEqual(@as(usize, 0), frame_bytes_sent);
 }
 
 test "tx ring handles wraparound slack" {
