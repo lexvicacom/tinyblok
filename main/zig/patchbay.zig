@@ -1,6 +1,6 @@
 // Embedded patchbay runtime
-// `publish!` enqueues into tx_ring; rules.collect() drains once at the end of
-// each tick, after all dispatches have produced their emits.
+// `publish!` enqueues into tx_ring; zig_main drains the queue at Tinyblok's
+// main-loop pace.
 //
 // Op state machines (Squelch, Deadband, MovingAvg, edges) live in the kernel
 // vendored from monoblok. Throttle stays local because it speaks microseconds
@@ -36,15 +36,28 @@ extern fn tinyblok_nats_reply(
     payload_len: usize,
 ) callconv(.c) c_int;
 
-/// Push everything currently buffered. Called once per tick from rules.collect().
+fn formattedLen(n: c_int, buf_len: usize) ?usize {
+    if (n <= 0) return null;
+    const len: usize = @intCast(n);
+    if (len >= buf_len) return null;
+    return len;
+}
+
+fn subjectLen(subject: [*:0]const u8) ?usize {
+    var n: usize = 0;
+    while (n <= tx_ring.SUBJ_MAX) : (n += 1) {
+        if (subject[n] == 0) return n;
+    }
+    return null;
+}
+
+/// Push everything currently buffered.
 pub fn flush() void {
     tx_ring.drain(tinyblok_nats_try_send);
 }
 
 pub fn emit(subject: [*:0]const u8, payload: []const u8) void {
-    // Subject is borrowed by pointer in the ring; caller's storage must outlive the drain.
-    var n: usize = 0;
-    while (subject[n] != 0) : (n += 1) {}
+    const n = subjectLen(subject) orelse return;
     _ = tx_ring.enqueue(subject[0..n], payload);
 }
 
@@ -52,8 +65,7 @@ pub fn emitFloat(subject: [*:0]const u8, value: f64, decimals: u8) void {
     var buf: [32]u8 = undefined;
     const prec: c_int = @intCast(decimals);
     const n = snprintf(&buf, buf.len, "%.*f", prec, value);
-    if (n <= 0) return;
-    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    const len = formattedLen(n, buf.len) orelse return;
     emit(subject, buf[0..len]);
 }
 
@@ -72,9 +84,8 @@ pub fn emitReentrant(
     redispatch: Redispatch,
 ) void {
     emit(subject, payload);
-    if (depth + 1 >= MAX_DEPTH) return;
-    var n: usize = 0;
-    while (subject[n] != 0) : (n += 1) {}
+    if (depth >= MAX_DEPTH - 1) return;
+    const n = subjectLen(subject) orelse return;
     redispatch(subject[0..n], payload, depth + 1);
 }
 
@@ -86,16 +97,14 @@ pub fn emitReentrantFloat(
 ) void {
     var buf: [32]u8 = undefined;
     const n = snprintf(&buf, buf.len, "%.6f", value);
-    if (n <= 0) return;
-    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    const len = formattedLen(n, buf.len) orelse return;
     emitReentrant(subject, buf[0..len], depth, redispatch);
 }
 
 pub fn emitInt(subject: [*:0]const u8, value: i64) void {
     var buf: [32]u8 = undefined;
     const n = snprintf(&buf, buf.len, "%lld", value);
-    if (n <= 0) return;
-    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    const len = formattedLen(n, buf.len) orelse return;
     emit(subject, buf[0..len]);
 }
 
@@ -108,16 +117,14 @@ pub fn replyFloat(subject: []const u8, value: f64, decimals: u8) void {
     var buf: [32]u8 = undefined;
     const prec: c_int = @intCast(decimals);
     const n = snprintf(&buf, buf.len, "%.*f", prec, value);
-    if (n <= 0) return;
-    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    const len = formattedLen(n, buf.len) orelse return;
     reply(subject, buf[0..len]);
 }
 
 pub fn replyInt(subject: []const u8, value: i64) void {
     var buf: [32]u8 = undefined;
     const n = snprintf(&buf, buf.len, "%lld", value);
-    if (n <= 0) return;
-    const len: usize = @min(@as(usize, @intCast(n)), buf.len - 1);
+    const len = formattedLen(n, buf.len) orelse return;
     reply(subject, buf[0..len]);
 }
 
@@ -138,12 +145,12 @@ pub const ClockEmitter = struct {
 
     fn setFloat(self: *ClockEmitter, value: f64) void {
         const n = snprintf(&self.payload, self.payload.len, "%.6f", value);
-        if (n <= 0) {
+        const len = formattedLen(n, self.payload.len) orelse {
             self.payload_len = 0;
             self.has_payload = false;
             return;
-        }
-        self.payload_len = @min(@as(usize, @intCast(n)), self.payload.len - 1);
+        };
+        self.payload_len = len;
         self.has_payload = true;
     }
 
