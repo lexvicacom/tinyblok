@@ -2,9 +2,12 @@ const std = @import("std");
 const Io = std.Io;
 const posix = std.posix;
 const manifest = @import("manifest");
+const bytes = @import("bytes.zig");
 const rules = @import("rules.zig");
 const tx_ring = @import("tx_ring.zig");
-const user = @import("user.zig");
+comptime {
+    _ = @import("user.zig");
+}
 
 var boot_us: u64 = 0;
 var clock_slots: [16]?i64 = [_]?i64{null} ** 16;
@@ -292,31 +295,7 @@ export fn tinyblok_hello_c(
     out_ptr: [*]u8,
     out_len: usize,
 ) usize {
-    return copyPrefixPayload("hello from host c stub: ", payload_ptr[0..payload_len], out_ptr[0..out_len]);
-}
-
-export fn tinyblok_hello_zig(
-    payload_ptr: [*]const u8,
-    payload_len: usize,
-    out_ptr: [*]u8,
-    out_len: usize,
-) usize {
-    return user.helloZig(payload_ptr, payload_len, out_ptr, out_len);
-}
-
-fn copyPrefixPayload(prefix: []const u8, payload: []const u8, out: []u8) usize {
-    var n: usize = 0;
-    for (prefix) |b| {
-        if (n >= out.len) return n;
-        out[n] = b;
-        n += 1;
-    }
-    for (payload) |b| {
-        if (n >= out.len) return n;
-        out[n] = b;
-        n += 1;
-    }
-    return n;
+    return bytes.copyPrefixPayload("hello from host c stub: ", payload_ptr[0..payload_len], out_ptr[0..out_len]);
 }
 
 export fn tinyblok_free_heap() u32 {

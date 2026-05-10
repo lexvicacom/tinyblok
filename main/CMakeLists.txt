@@ -42,6 +42,7 @@ set(GEN_RULES ${CMAKE_CURRENT_SOURCE_DIR}/zig/rules.zig)
 set(ZIG_DEPS
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/main.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/user.zig
+    ${CMAKE_CURRENT_SOURCE_DIR}/zig/bytes.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/patchbay.zig
     ${CMAKE_CURRENT_SOURCE_DIR}/zig/kernel.zig
     ${GEN_RULES}

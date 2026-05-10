@@ -1,8 +1,8 @@
 const tx_ring = @import("tx_ring.zig");
-const user = @import("user.zig");
 
 comptime {
     _ = @import("rules.zig");
+    _ = @import("user.zig");
 }
 
 extern fn vTaskDelay(ticks: u32) void;
@@ -20,13 +20,4 @@ export fn zig_main() callconv(.c) void {
 
         vTaskDelay(MAIN_LOOP_DELAY_TICKS);
     }
-}
-
-export fn tinyblok_hello_zig(
-    payload_ptr: [*]const u8,
-    payload_len: usize,
-    out_ptr: [*]u8,
-    out_len: usize,
-) callconv(.c) usize {
-    return user.helloZig(payload_ptr, payload_len, out_ptr, out_len);
 }
