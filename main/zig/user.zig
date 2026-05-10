@@ -1,15 +1,15 @@
-// User-owned Zig functions registered from patchbay.edn.
+// User-owned Zig functions used by patchbay exports.
 //
 // Keep these dependency-free and bounded. Byte transforms receive an input
 // slice as (ptr,len), write into the caller-provided output buffer, and return
 // the number of bytes written.
 
-export fn tinyblok_hello_zig(
+pub fn helloZig(
     payload_ptr: [*]const u8,
     payload_len: usize,
     out_ptr: [*]u8,
     out_len: usize,
-) callconv(.c) usize {
+) usize {
     return copyPrefixPayload(
         "hello from zig: ",
         payload_ptr[0..payload_len],

@@ -4,6 +4,7 @@ const posix = std.posix;
 const manifest = @import("manifest");
 const rules = @import("rules.zig");
 const tx_ring = @import("tx_ring.zig");
+const user = @import("user.zig");
 
 var boot_us: u64 = 0;
 var clock_slots: [16]?i64 = [_]?i64{null} ** 16;
@@ -68,6 +69,7 @@ pub fn main(init: std.process.Init) !void {
 
     var line_buf: [256]u8 = undefined;
     var line_len: usize = 0;
+    var discard_line = false;
     var stdin_open = true;
     var linger_deadline: ?i64 = null;
 
@@ -111,14 +113,22 @@ pub fn main(init: std.process.Init) !void {
 
         for (read_buf[0..n]) |b| {
             if (b == '\n') {
+                if (discard_line) {
+                    discard_line = false;
+                    line_len = 0;
+                    continue;
+                }
                 const line = std.mem.trimEnd(u8, line_buf[0..line_len], "\r");
                 try handleLine(line, stdout, stderr, label_stream);
                 line_len = 0;
+            } else if (discard_line) {
+                continue;
             } else if (line_len < line_buf.len) {
                 line_buf[line_len] = b;
                 line_len += 1;
             } else {
                 try stderr.writeAll("soundcheck: input line too long\n");
+                discard_line = true;
                 line_len = 0;
             }
         }
@@ -291,7 +301,7 @@ export fn tinyblok_hello_zig(
     out_ptr: [*]u8,
     out_len: usize,
 ) usize {
-    return copyPrefixPayload("hello from zig: ", payload_ptr[0..payload_len], out_ptr[0..out_len]);
+    return user.helloZig(payload_ptr, payload_len, out_ptr, out_len);
 }
 
 fn copyPrefixPayload(prefix: []const u8, payload: []const u8, out: []u8) usize {
