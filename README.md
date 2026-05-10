@@ -1,6 +1,6 @@
 # tinyblok
 
-ESP-IDF firmware for ESP32-C6. It runs a tiny patchbay on-device and publishes conditioned sensor streams to NATS. It is the _tiny_ counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
+Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, and publishes conditioned sensor streams to NATS. It is the miniature counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
 
 ![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
