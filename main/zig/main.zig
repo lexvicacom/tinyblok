@@ -10,13 +10,15 @@ extern fn tinyblok_nats_try_send(data: [*]const u8, data_len: usize) callconv(.c
 extern fn tinyblok_nats_drain_rx() callconv(.c) void;
 extern fn tinyblok_nats_maintain() callconv(.c) void;
 
+const MAIN_LOOP_DELAY_TICKS: u32 = 10;
+
 export fn zig_main() callconv(.c) void {
     while (true) {
-        tinyblok_nats_maintain(); // Keep NATS and wifi up
-        tx_ring.drain(tinyblok_nats_try_send); // transmit anything buffered
-        tinyblok_nats_drain_rx(); // recv
+        tinyblok_nats_maintain();
+        tx_ring.drain(tinyblok_nats_try_send);
+        tinyblok_nats_drain_rx();
 
-        vTaskDelay(10); // 100ms tick
+        vTaskDelay(MAIN_LOOP_DELAY_TICKS);
     }
 }
 
