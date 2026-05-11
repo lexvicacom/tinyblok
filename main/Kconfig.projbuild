@@ -105,4 +105,35 @@ menu "tinyblok"
             containing the top-level CMakeLists.txt). The file is
             embedded into the firmware image at build time.
 
+    choice TINYBLOK_DISPLAY_OLED_SIZE
+        prompt "SSD1306 OLED size"
+        default TINYBLOK_DISPLAY_OLED_128X64
+
+        config TINYBLOK_DISPLAY_OLED_128X64
+            bool "128x64"
+            help
+                Common 0.96 inch SSD1306 module. Uses 8 display pages.
+
+        config TINYBLOK_DISPLAY_OLED_128X32
+            bool "128x32"
+            help
+                Smaller SSD1306 module. Uses 4 display pages and adjusted
+                COM pin setup.
+
+        config TINYBLOK_DISPLAY_OLED_128X48
+            bool "128x48"
+            help
+                Taller SSD1306-compatible module. Uses 6 display pages and
+                leaves room for a third status line.
+    endchoice
+
+    config TINYBLOK_DISPLAY_OLED_128X32_THREE_ROWS
+        bool "Use compact 3-row layout on 128x32 OLED"
+        depends on TINYBLOK_DISPLAY_OLED_128X32
+        default n
+        help
+            Draw a third text line on a 128x32 OLED while keeping the
+            controller initialized for 32 pixel rows. This uses consecutive
+            8-pixel pages and may look cramped on some modules.
+
 endmenu
