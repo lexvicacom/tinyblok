@@ -258,6 +258,7 @@ fn monotonicUs() u64 {
 
 export fn tinyblok_tx_ring_lock() callconv(.c) void {}
 export fn tinyblok_tx_ring_unlock() callconv(.c) void {}
+export fn tinyblok_event_publish_pub_sent() callconv(.c) void {}
 
 export fn tinyblok_nats_try_send(_: [*]const u8, _: usize) callconv(.c) isize {
     return -1;

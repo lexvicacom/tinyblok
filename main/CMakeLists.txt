@@ -2,10 +2,19 @@
 # this call eagerly, so conditionals that depend on Kconfig values must be
 # applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
-    SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c"
+    SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c" "c/app_events.c" "c/display.c"
     INCLUDE_DIRS "c"
-    PRIV_REQUIRES esp_timer esp_driver_tsens esp_wifi esp_event esp_netif nvs_flash lwip
+    PRIV_REQUIRES esp_timer esp_driver_tsens esp_driver_i2c esp_driver_gpio esp_wifi esp_event esp_netif nvs_flash lwip
 )
+
+file(READ ${CMAKE_SOURCE_DIR}/build.zig.zon TINYBLOK_ZON)
+string(REGEX MATCH "\\.version[ \t\r\n]*=[ \t\r\n]*\"([^\"]+)\"" _tinyblok_version_match "${TINYBLOK_ZON}")
+if(CMAKE_MATCH_1)
+    set(TINYBLOK_VERSION "${CMAKE_MATCH_1}")
+else()
+    set(TINYBLOK_VERSION "dev")
+endif()
+target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYBLOK_VERSION=\"${TINYBLOK_VERSION}\")
 
 if(CONFIG_TINYBLOK_NATS_TLS)
     idf_component_optional_requires(PRIVATE esp-tls mbedtls)

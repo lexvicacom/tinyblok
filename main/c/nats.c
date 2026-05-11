@@ -10,9 +10,16 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#ifdef ESP_PLATFORM
+#include "lwip/inet.h"
+#else
+#include <arpa/inet.h>
+#endif
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
+
+#include "app_events.h"
 
 #if CONFIG_TINYBLOK_NATS_TLS
 #include "mbedtls/ssl.h"
@@ -46,6 +53,7 @@ extern void tinyblok_nats_handle_msg(const unsigned char *subject, size_t subjec
                                      const unsigned char *payload, size_t payload_len);
 
 static int sock = -1;
+static int nats_connected = 0;
 
 #if CONFIG_TINYBLOK_NATS_TLS
 static int tls_active = 0;
@@ -207,6 +215,11 @@ static void close_sock(int log_disconnect)
     if (NET_OPEN())
     {
         net_close();
+        if (nats_connected)
+        {
+            nats_connected = 0;
+            tinyblok_event_publish_nats_disconnected();
+        }
         rx_len = 0;
         // Restart any partially-sent head record from byte 0 on next drain.
         tinyblok_tx_ring_reset_in_flight();
@@ -425,6 +438,7 @@ static int try_connect_once(int verbose_failure)
 {
     const char *host = CONFIG_TINYBLOK_NATS_HOST;
     int port = CONFIG_TINYBLOK_NATS_PORT;
+    char peer_ip[16] = "";
 
     char port_str[8];
     snprintf(port_str, sizeof(port_str), "%d", port);
@@ -458,6 +472,11 @@ static int try_connect_once(int verbose_failure)
         close(fd);
         freeaddrinfo(res);
         return -1;
+    }
+    if (res->ai_family == AF_INET)
+    {
+        const struct sockaddr_in *addr = (const struct sockaddr_in *)res->ai_addr;
+        snprintf(peer_ip, sizeof(peer_ip), "%s", inet_ntoa(addr->sin_addr));
     }
     freeaddrinfo(res);
     sock = fd;
@@ -532,6 +551,8 @@ static int try_connect_once(int verbose_failure)
 #else
     ESP_LOGI(TAG, "connected %s:%d", host, port);
 #endif
+    nats_connected = 1;
+    tinyblok_event_publish_nats_connected(host, peer_ip, (uint16_t)port);
     ESP_LOGI(TAG, "<- %s", info_buf);
     size_t backlog_bytes = tinyblok_tx_ring_used();
     if (backlog_bytes > 0)
@@ -709,6 +730,7 @@ void tinyblok_nats_drain_rx(void)
                 return;
             }
 
+            tinyblok_event_publish_message_processed();
             if (msg.reply_len > 0)
             {
                 tinyblok_nats_handle_msg(msg.subject, msg.subject_len,

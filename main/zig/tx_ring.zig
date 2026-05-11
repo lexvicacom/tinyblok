@@ -13,6 +13,7 @@ const std = @import("std");
 extern fn snprintf(buf: [*]u8, len: usize, fmt: [*:0]const u8, ...) c_int;
 extern fn tinyblok_tx_ring_lock() callconv(.c) void;
 extern fn tinyblok_tx_ring_unlock() callconv(.c) void;
+extern fn tinyblok_event_publish_pub_sent() callconv(.c) void;
 
 pub const RING_CAP: usize = 8192;
 pub const SUBJ_MAX: usize = 64;
@@ -313,6 +314,7 @@ pub fn drain(try_send: TrySendFn) void {
             .complete => {
                 advance(rec.rec_size);
                 frame_bytes_sent = 0;
+                tinyblok_event_publish_pub_sent();
             },
             .blocked => {
                 frame_bytes_sent = sent;

@@ -4,6 +4,8 @@
 #include <time.h>
 #include <sys/types.h>
 
+#include "app_events.h"
+
 typedef struct
 {
     const char *subject;
@@ -73,6 +75,11 @@ static int run_serve(void)
         tinyblok_nats_drain_rx();
         if (handle_msg_count > 0)
         {
+            if (tinyblok_message_count() == 0)
+            {
+                fprintf(stderr, "message event counter did not increment\n");
+                return 1;
+            }
             printf("ok nats host smoke: handled=%zu reset_in_flight=%zu\n",
                    handle_msg_count, reset_in_flight_count);
             return 0;

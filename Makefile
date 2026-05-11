@@ -99,7 +99,7 @@ nats-host-smoke:
 	@mkdir -p $(HOST_BUILD_DIR)
 	@echo "CC $(HOST_BUILD_DIR)/nats_smoke"
 	@$(HOST_CC) -std=c11 -D_GNU_SOURCE -DCONFIG_TINYBLOK_NATS_PORT=$(NATS_HOST_PORT) \
-		-Itests/host/include tests/host/nats_smoke.c main/c/nats.c \
+		-Itests/host/include -Imain/c tests/host/nats_smoke.c main/c/nats.c main/c/app_events.c \
 		-o $(HOST_BUILD_DIR)/nats_smoke
 	@echo "NATS host smoke on 127.0.0.1:$(NATS_HOST_PORT)"
 	@log="$(HOST_BUILD_DIR)/nats-server.log"; \
