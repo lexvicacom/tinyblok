@@ -46,6 +46,7 @@ The same API is available on the LAN:
 
 - `GET /api/status`
 - `GET /api/settings`
+- `GET /api/wifi-scan`
 - `POST /api/settings`
 - `POST /api/reboot`
 - `POST /api/factory-reset`

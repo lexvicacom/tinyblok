@@ -29,7 +29,7 @@ menu "tinyblok"
 
     config TINYBLOK_NATS_HOST
         string "Default NATS broker host"
-        default "192.168.1.100"
+        default "demo.rtd.pub"
         help
             Hostname or dotted-quad IP of the NATS broker the device
             publishes to. No DNS resolution beyond what lwIP does.

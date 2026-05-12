@@ -1,5 +1,6 @@
 #include "tinyblok_wifi.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "display.h"
@@ -38,6 +39,27 @@ static bool setup_ap_started;
 static TaskHandle_t dns_task_handle;
 static char ip_string[16] = "0.0.0.0";
 static char current_ssid[64] = "";
+
+static int scan_result_find(const tinyblok_wifi_scan_result_t *results, size_t count, const char *ssid)
+{
+    for (size_t i = 0; i < count; i++)
+    {
+        if (strcmp(results[i].ssid, ssid) == 0)
+            return (int)i;
+    }
+    return -1;
+}
+
+static size_t scan_result_weakest(const tinyblok_wifi_scan_result_t *results, size_t count)
+{
+    size_t weakest = 0;
+    for (size_t i = 1; i < count; i++)
+    {
+        if (results[i].rssi < results[weakest].rssi)
+            weakest = i;
+    }
+    return weakest;
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -333,6 +355,86 @@ esp_err_t tinyblok_wifi_connect_sta(const char *ssid, const char *password, uint
         ESP_LOGW(TAG, "wifi connect timed out after %u ms", (unsigned)timeout_ms);
         return ESP_ERR_TIMEOUT;
     }
+    return ESP_OK;
+}
+
+esp_err_t tinyblok_wifi_scan(tinyblok_wifi_scan_result_t *results, size_t cap, size_t *count)
+{
+    ESP_RETURN_ON_FALSE(results && count && cap > 0, ESP_ERR_INVALID_ARG, TAG, "bad scan output");
+    ESP_RETURN_ON_ERROR(ensure_wifi(), TAG, "ensure wifi");
+
+    *count = 0;
+    memset(results, 0, cap * sizeof(results[0]));
+
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(setup_ap_started ? WIFI_MODE_APSTA : WIFI_MODE_STA),
+                        TAG, "set scan wifi mode");
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
+        ESP_RETURN_ON_ERROR(err, TAG, "start wifi for scan");
+
+    wifi_scan_config_t scan_cfg = {
+        .show_hidden = false,
+    };
+    ESP_RETURN_ON_ERROR(esp_wifi_scan_start(&scan_cfg, true), TAG, "wifi scan");
+
+    uint16_t record_count = 32;
+    wifi_ap_record_t *records = calloc(record_count, sizeof(*records));
+    ESP_RETURN_ON_FALSE(records, ESP_ERR_NO_MEM, TAG, "allocate scan records");
+
+    err = esp_wifi_scan_get_ap_records(&record_count, records);
+    if (err != ESP_OK)
+    {
+        free(records);
+        return err;
+    }
+
+    for (uint16_t i = 0; i < record_count; i++)
+    {
+        const char *ssid = (const char *)records[i].ssid;
+        if (ssid[0] == '\0')
+            continue;
+
+        int existing = scan_result_find(results, *count, ssid);
+        if (existing >= 0)
+        {
+            if (records[i].rssi > results[existing].rssi)
+            {
+                results[existing].rssi = records[i].rssi;
+                results[existing].authmode = (uint8_t)records[i].authmode;
+            }
+            continue;
+        }
+
+        size_t slot = *count;
+        if (*count < cap)
+            (*count)++;
+        else
+        {
+            slot = scan_result_weakest(results, *count);
+            if (records[i].rssi <= results[slot].rssi)
+                continue;
+        }
+
+        strlcpy(results[slot].ssid, ssid, sizeof(results[slot].ssid));
+        results[slot].rssi = records[i].rssi;
+        results[slot].authmode = (uint8_t)records[i].authmode;
+    }
+    free(records);
+
+    for (size_t i = 0; i < *count; i++)
+    {
+        for (size_t j = i + 1; j < *count; j++)
+        {
+            if (results[j].rssi > results[i].rssi)
+            {
+                tinyblok_wifi_scan_result_t tmp = results[i];
+                results[i] = results[j];
+                results[j] = tmp;
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "wifi scan found %u visible SSIDs", (unsigned)*count);
     return ESP_OK;
 }
 
