@@ -4,29 +4,36 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 
 ![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
-## Status
+## Install
 
-- Connects to Wi-Fi, then NATS over TCP or TLS.
-- Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
-- Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
-- Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
-- First boot starts a `TINYBLOK` Wi-Fi setup portal. Runtime Wi-Fi and NATS settings are stored in NVS.
-- Run `make build flash`, then `make monitor` to try it on hardware.
+The fastest path is browser-based flashing. Serve [docs/install.html](./docs/install.html)
+from GitHub Pages with release binaries published under `docs/firmware/latest/`,
+open it in Chrome or Edge, plug the board in over USB, and pick a port.
 
-![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
+To build and flash from source:
 
-<img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
+```sh
+make build
+make flash
+make monitor
+```
 
-## First-Time Setup
+`make flash` auto-detects the serial port; pass `PORT=/dev/cu.usbmodem101`
+(or similar) to override. ESP-IDF must be installed; see
+[make commands](#make-commands) below for `IDF_PATH` / `IDF_EXPORT` overrides.
 
-1. Flash the firmware. For browser-based flashing, serve `docs/install.html`
-   from GitHub Pages with the release binaries published under
-   `docs/firmware/latest/`.
-2. Join the `TINYBLOK` Wi-Fi network advertised by the device.
-3. The captive portal should open automatically. If it does not, open `http://10.42.0.1`.
-4. Enter Wi-Fi, device name, and NATS settings.
-5. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
-6. On the LAN, the device appears at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
+Exit `make monitor` with **Ctrl+]** (Ctrl+C is trapped by the monitor).
+
+## First-time setup
+
+After flashing, the device boots into a captive setup portal. No serial
+console or pre-baked credentials are needed.
+
+1. Join the `TINYBLOK` Wi-Fi network advertised by the device.
+2. The captive portal should open automatically. If it does not, open `http://10.42.0.1`.
+3. Enter Wi-Fi, device name, and NATS settings.
+4. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
+5. On the LAN, the device appears at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
 
 The device name is used as the mDNS hostname after setup. Use simple letters,
 numbers, spaces, underscores, or hyphens; firmware normalizes it to a
@@ -35,7 +42,19 @@ lowercase `.local` hostname with hyphens.
 If a display is attached during setup, it shows the setup AP and `http://10.42.0.1` when there is enough room.
 Display I2C defaults are SDA GPIO14 and SCL GPIO15; change them in menuconfig if your board is wired differently.
 
-## Changing Settings Later
+## What it does
+
+- Connects to Wi-Fi, then NATS over TCP or TLS.
+- Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters.
+- Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
+- Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
+- Runtime Wi-Fi and NATS settings are stored in NVS and editable later over HTTP.
+
+![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
+
+<img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
+
+## Changing settings later
 
 Open `http://<device-name>.local` on the same LAN, for example
 `http://tinyblok.local` or `http://kitchen.local`. Use that page to change
@@ -58,7 +77,7 @@ curl http://tinyblok.local/api/status
 curl -X POST http://tinyblok.local/api/reboot
 ```
 
-## Factory Reset
+## Factory reset
 
 Use the setup/settings page button or `POST /api/factory-reset`. This erases
 the `tinyblok` NVS namespace and restores the setup portal on reboot. There is
