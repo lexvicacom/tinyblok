@@ -14,7 +14,9 @@
 #include "freertos/task.h"
 #include "mdns.h"
 #include "sdkconfig.h"
+#include "tinyblok_captive_html.h"
 #include "tinyblok_config.h"
+#include "tinyblok_setup_html.h"
 #include "tinyblok_wifi.h"
 
 static const char *TAG = "tinyblok_web";
@@ -22,46 +24,6 @@ static const char *TAG = "tinyblok_web";
 static httpd_handle_t server;
 static bool setup_mode;
 static char last_error[160];
-
-static const char setup_html[] =
-"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-"<title>tinyblok setup</title><style>"
-":root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#17201a;background:#f7f7f4}"
-"body{margin:0;padding:20px;background:#101813;color:#e8efe7;background-image:linear-gradient(rgba(98,141,106,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(98,141,106,.13) 1px,transparent 1px);background-size:28px 28px}"
-".wrap{max-width:760px;margin:0 auto}h1{font-size:2rem;margin:0 0 4px;letter-spacing:0;color:#9ff0a8}"
-"p{color:#b6c5b5}.grid{display:grid;gap:12px;background:#f6f4ea;color:#17201a;border:1px solid #47624d;border-radius:8px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.35)}"
-"label{display:grid;gap:5px;font-weight:650}"
-"input,select,button{font:inherit;border:1px solid #aeb8ad;border-radius:6px;padding:11px;background:#fffef8;color:#17201a}"
-"input:focus,select:focus{outline:2px solid #76c96e;border-color:#27663a}"
-"input[type=checkbox]{width:22px;height:22px}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}"
-".check{display:flex;align-items:center;gap:10px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}"
-"button{background:#1f7a3d;color:white;border-color:#1f7a3d;font-weight:700}.danger{background:#9b2d20;border-color:#9b2d20}"
-".msg{min-height:1.5em;margin:12px 0;font-weight:650}.err{color:#ffb0a3}.ok{color:#9ff0a8}"
-"@media(max-width:620px){.row{grid-template-columns:1fr}body{padding:14px}}</style></head><body><main class=\"wrap\">"
-"<h1>tinyblok setup</h1><p>Enter the Wi-Fi and NATS details for this device, then save to connect.</p><div id=\"msg\" class=\"msg\"></div>"
-"<form id=\"f\" class=\"grid\" method=\"post\" action=\"/api/settings\" enctype=\"multipart/form-data\">"
-"<label>Wi-Fi SSID<input name=\"wifi_ssid\" maxlength=\"63\" required></label>"
-"<label>Wi-Fi password<input name=\"wifi_password\" type=\"password\" maxlength=\"127\" autocomplete=\"new-password\"></label>"
-"<label>Device name<input name=\"device_name\" maxlength=\"63\" required></label>"
-"<div class=\"row\"><label>NATS host<input name=\"nats_host\" maxlength=\"127\" required></label>"
-"<label>NATS port<input name=\"nats_port\" type=\"number\" min=\"1\" max=\"65535\" required></label></div>"
-"<div class=\"row\"><label>NATS auth<select name=\"nats_auth\"><option value=\"none\">None</option><option value=\"userpass\">Username + password</option><option value=\"token\">Token</option><option value=\"creds\">.creds file</option></select></label>"
-"<label class=\"check\"><input name=\"nats_tls\" value=\"1\" type=\"checkbox\">Use TLS</label></div>"
-"<div class=\"row\" id=\"userpassrow\"><label>NATS username<input name=\"nats_user\" maxlength=\"63\"></label>"
-"<label>NATS password<input name=\"nats_password\" type=\"password\" maxlength=\"127\" autocomplete=\"new-password\"></label></div>"
-"<label id=\"tokenrow\">NATS token<input name=\"nats_token\" type=\"password\" maxlength=\"255\" autocomplete=\"new-password\"></label>"
-"<label id=\"credsrow\">NATS .creds file<input name=\"nats_creds_file\" type=\"file\" accept=\".creds,text/plain\"></label>"
-"<div class=\"actions\"><button>Save and connect</button><button class=\"danger\" type=\"button\" id=\"reset\">Factory reset</button></div>"
-"</form></main><script>"
-"const $=s=>document.querySelector(s),msg=$('#msg'),form=$('#f');"
-"function show(t,c){msg.textContent=t||'';msg.className='msg '+(c||'')}"
-"function authChanged(){let a=form.elements.nats_auth.value,creds=a==='creds';form.elements.nats_tls.checked=creds||form.elements.nats_tls.checked;form.elements.nats_tls.disabled=creds;$('#credsrow').style.display=creds?'grid':'none';$('#userpassrow').style.display=a==='userpass'?'grid':'none';$('#tokenrow').style.display=a==='token'?'grid':'none'}"
-"async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();if(st.last_error)show(st.last_error,'err')}"
-"form.onchange=e=>{if(e.target.name==='nats_auth')authChanged()};"
-"form.onsubmit=async e=>{e.preventDefault();show('Saving...');let d=new FormData(form);if(form.elements.nats_auth.value==='creds')d.set('nats_tls','1');let r=await fetch('/api/settings',{method:'POST',body:d});let j=await r.json();show(j.message||j.error,(r.ok&&j.ok)?'ok':'err')};"
-"$('#reset').onclick=async()=>{if(confirm('Factory reset tinyblok settings?')){await fetch('/api/factory-reset',{method:'POST'});show('Rebooting...','ok')}};"
-"load().catch(e=>show(String(e),'err'));</script></body></html>";
 
 static esp_err_t json_begin(httpd_req_t *req, int status)
 {
@@ -86,6 +48,20 @@ static esp_err_t json_send_message(httpd_req_t *req, int status, bool ok, const 
     json_begin(req, status);
     snprintf(body, sizeof(body), "{\"ok\":%s,\"%s\":\"%s\"}", ok ? "true" : "false", key, message ? message : "");
     return httpd_resp_sendstr(req, body);
+}
+
+static esp_err_t send_setup_html(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, (const char *)tinyblok_setup_html, tinyblok_setup_html_len);
+}
+
+static esp_err_t send_captive_html(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, (const char *)tinyblok_captive_html, tinyblok_captive_html_len);
 }
 
 static esp_err_t send_status_json(httpd_req_t *req, const tinyblok_config_t *cfg)
@@ -281,9 +257,7 @@ static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap)
 
 static esp_err_t root_get(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, setup_html, HTTPD_RESP_USE_STRLEN);
+    return send_setup_html(req);
 }
 
 static esp_err_t captive_get(httpd_req_t *req)
@@ -292,9 +266,7 @@ static esp_err_t captive_get(httpd_req_t *req)
      * Captive-network assistants are short-lived and dislike redirect loops.
      * Serve the same local setup page directly for every probe/unknown URL.
      */
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, setup_html, HTTPD_RESP_USE_STRLEN);
+    return send_captive_html(req);
 }
 
 static esp_err_t status_get(httpd_req_t *req)
@@ -425,18 +397,7 @@ static esp_err_t register_handlers(void)
     const httpd_uri_t reboot = {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post};
     const httpd_uri_t reset = {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = factory_reset_post};
     const httpd_uri_t captive_any = {.uri = "/*", .method = HTTP_GET, .handler = captive_get};
-    const httpd_uri_t probes[] = {
-        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_get},
-        {.uri = "/fwlink", .method = HTTP_GET, .handler = captive_get},
-    };
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), TAG, "register /");
-    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++)
-        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &probes[i]), TAG, "register captive probe");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &status), TAG, "register status");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_get_uri), TAG, "register settings get");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_post_uri), TAG, "register settings post");
@@ -454,7 +415,7 @@ static esp_err_t start_server(bool setup)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.stack_size = 6144;
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 8;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     ESP_RETURN_ON_ERROR(httpd_start(&server, &cfg), TAG, "start http server");
     ESP_RETURN_ON_ERROR(register_handlers(), TAG, "register handlers");
@@ -512,7 +473,8 @@ static esp_err_t start_mdns(void)
         ESP_RETURN_ON_ERROR(err, TAG, "set mdns instance");
     }
     free(cfg);
-    mdns_service_add("tinyblok", "_http", "_tcp", 80, NULL, 0);
+    ESP_RETURN_ON_ERROR(mdns_service_add("tinyblok", "_http", "_tcp", 80, NULL, 0),
+                        TAG, "add mdns http service");
     ESP_LOGI(TAG, "mDNS started: http://%s.local", hostname);
     return ESP_OK;
 }

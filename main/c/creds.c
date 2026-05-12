@@ -12,11 +12,8 @@
 #ifndef CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 #define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
 #endif
-#ifndef CONFIG_TINYBLOK_NATS_AUTH_CREDS
-#define CONFIG_TINYBLOK_NATS_AUTH_CREDS 0
-#endif
 
-#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 
 #ifdef ESP_PLATFORM
 #include "tinyblok_config.h"
@@ -255,7 +252,7 @@ int tinyblok_creds_sign(const unsigned char *msg, size_t msg_len, unsigned char 
     return tinyblok_ed25519_sign(g_creds.seed, msg, msg_len, sig_out);
 }
 
-#else // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#else // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 
 // Link-clean stubs for builds without creds auth.
 int tinyblok_creds_load(void) { return -1; }
@@ -276,4 +273,4 @@ size_t tinyblok_b64url_encode(const unsigned char *in, size_t len, char *out)
     return 0;
 }
 
-#endif // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#endif // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT

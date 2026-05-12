@@ -1,0 +1,25 @@
+{
+  "name": "tinyblok",
+  "version": "latest",
+  "home_assistant_domain": "tinyblok",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C6",
+      "parts": [
+        {
+          "path": "firmware/latest/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "firmware/latest/partition-table.bin",
+          "offset": 32768
+        },
+        {
+          "path": "firmware/latest/tinyblok.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}
