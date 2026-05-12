@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "nvs_flash.h"
 #include <stdlib.h>
+
 #include "sdkconfig.h"
 
 #include "app_events.h"
@@ -79,7 +80,9 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(tinyblok_wifi_stop_setup_ap());
 
-    ESP_ERROR_CHECK(tinyblok_web_start_lan_server());
+    err = tinyblok_web_start_lan_server();
+    if (err != ESP_OK)
+        ESP_LOGW(TAG, "LAN web server failed: %s", esp_err_to_name(err));
 
     tinyblok_sources_init();
     tinyblok_drivers_start();

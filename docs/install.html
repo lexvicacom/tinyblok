@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tinyblok installer</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#17201a;background:#101813}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;background-image:linear-gradient(rgba(98,141,106,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(98,141,106,.13) 1px,transparent 1px);background-size:28px 28px}
+main{width:min(720px,100%);color:#e8efe7}
+h1{margin:0 0 8px;color:#9ff0a8;font-size:2rem}
+p,li{color:#c3d0c0;line-height:1.55}
+.panel{background:#f6f4ea;color:#17201a;border:1px solid #47624d;border-radius:8px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+.panel p,.panel li{color:#334039}
+esp-web-install-button{display:block;margin:18px 0}
+code{background:#e8e4d7;padding:2px 5px;border-radius:4px}
+a{color:#9ff0a8}
+.repo{margin-top:14px;font-size:.95rem}
+</style>
+</head>
+<body>
+<main>
+<h1>tinyblok installer</h1>
+<p>Flash tinyblok from a Chromium-based browser, then configure Wi-Fi and NATS from the device setup portal.</p>
+<div class="panel">
+<esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+<ol>
+<li>Connect the ESP32-C6 over USB.</li>
+<li>Click install and choose the serial port.</li>
+<li>After flashing, join the <code>TINYBLOK</code> Wi-Fi network.</li>
+<li>Open the captive portal, or browse to <code>http://10.42.0.1</code>.</li>
+<li>Save Wi-Fi, device name, and NATS settings. No per-user secrets are baked into firmware.</li>
+</ol>
+</div>
+<p class="repo"><a href="https://github.com/lexvicacom/tinyblok">github.com/lexvicacom/tinyblok</a></p>
+</main>
+</body>
+</html>

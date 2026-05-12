@@ -125,23 +125,6 @@ static esp_err_t get_string(nvs_handle_t nvs, const char *key, char *dst, size_t
     return err;
 }
 
-static esp_err_t get_string_fallback(nvs_handle_t nvs, const char *key, const char *old_key,
-                                     char *dst, size_t dst_len)
-{
-    size_t len = dst_len;
-    esp_err_t err = nvs_get_str(nvs, key, dst, &len);
-    if (err == ESP_ERR_NVS_NOT_FOUND && old_key)
-    {
-        len = dst_len;
-        err = nvs_get_str(nvs, old_key, dst, &len);
-    }
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-        return ESP_OK;
-    if (err == ESP_OK && len > dst_len)
-        return ESP_ERR_INVALID_SIZE;
-    return err;
-}
-
 esp_err_t tinyblok_config_load(tinyblok_config_t *cfg)
 {
     ESP_RETURN_ON_FALSE(cfg, ESP_ERR_INVALID_ARG, TAG, "config is null");
@@ -159,15 +142,15 @@ esp_err_t tinyblok_config_load(tinyblok_config_t *cfg)
     if (err == ESP_OK)
         err = get_string(nvs, "wifi_password", cfg->wifi_password, sizeof(cfg->wifi_password));
     if (err == ESP_OK)
-        err = get_string_fallback(nvs, "nats_host", "mqtt_host", cfg->nats_host, sizeof(cfg->nats_host));
+        err = get_string(nvs, "nats_host", cfg->nats_host, sizeof(cfg->nats_host));
     if (err == ESP_OK)
-        err = get_string_fallback(nvs, "nats_user", "mqtt_user", cfg->nats_user, sizeof(cfg->nats_user));
+        err = get_string(nvs, "nats_user", cfg->nats_user, sizeof(cfg->nats_user));
     if (err == ESP_OK)
-        err = get_string_fallback(nvs, "nats_password", "mqtt_password", cfg->nats_password, sizeof(cfg->nats_password));
+        err = get_string(nvs, "nats_password", cfg->nats_password, sizeof(cfg->nats_password));
     if (err == ESP_OK)
-        err = get_string_fallback(nvs, "nats_token", "mqtt_token", cfg->nats_token, sizeof(cfg->nats_token));
+        err = get_string(nvs, "nats_token", cfg->nats_token, sizeof(cfg->nats_token));
     if (err == ESP_OK)
-        err = get_string_fallback(nvs, "nats_base", "mqtt_base", cfg->nats_base_topic, sizeof(cfg->nats_base_topic));
+        err = get_string(nvs, "nats_base", cfg->nats_base_topic, sizeof(cfg->nats_base_topic));
     if (err == ESP_OK)
         err = get_string(nvs, "nats_auth", cfg->nats_auth, sizeof(cfg->nats_auth));
     if (err == ESP_OK)
@@ -183,8 +166,6 @@ esp_err_t tinyblok_config_load(tinyblok_config_t *cfg)
     uint8_t configured = cfg->configured ? 1 : 0;
     if (err == ESP_OK)
         err = nvs_get_u16(nvs, "nats_port", &nats_port);
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-        err = nvs_get_u16(nvs, "mqtt_port", &nats_port);
     if (err == ESP_ERR_NVS_NOT_FOUND)
         err = ESP_OK;
     if (err == ESP_OK)

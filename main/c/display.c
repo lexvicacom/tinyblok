@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "app_events.h"
+#include "display_font.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
@@ -30,7 +31,7 @@ static const char *TAG = "display";
 #define LCD_SDA_GPIO ((gpio_num_t)CONFIG_TINYBLOK_DISPLAY_I2C_SDA_GPIO)
 #define LCD_SCL_GPIO ((gpio_num_t)CONFIG_TINYBLOK_DISPLAY_I2C_SCL_GPIO)
 #define LCD_I2C_HZ 10000
-#define LCD_COLS 16
+#define DISPLAY_TEXT_COLS 16
 
 #define OLED_ADDR_PRIMARY 0x3C
 #define OLED_ADDR_SECONDARY 0x3D
@@ -63,8 +64,10 @@ static const char *TAG = "display";
 #endif
 
 #define OLED_PAGE_COUNT (OLED_HEIGHT / 8)
-#define OLED_FONT_WIDTH 5
-#define OLED_CELL_WIDTH 6
+#define OLED_CELL_WIDTH (TINYBLOK_OLED_GLYPH_WIDTH + 1)
+#if DISPLAY_TEXT_COLS * OLED_CELL_WIDTH > OLED_WIDTH
+#error "OLED text layout exceeds display width"
+#endif
 
 #ifndef TINYBLOK_VERSION
 #define TINYBLOK_VERSION "dev"
@@ -252,17 +255,17 @@ static esp_err_t lcd_set_cursor(uint8_t row, uint8_t col)
     static const uint8_t row_addr[2] = {0x00, 0x40};
     if (row > 1)
         row = 1;
-    if (col >= LCD_COLS)
-        col = LCD_COLS - 1;
+    if (col >= DISPLAY_TEXT_COLS)
+        col = DISPLAY_TEXT_COLS - 1;
     return lcd_cmd((uint8_t)(0x80 | row_addr[row] | col));
 }
 
 static esp_err_t lcd_write_padded(const char *text)
 {
     size_t i = 0;
-    for (; i < LCD_COLS && text[i] != '\0'; i++)
+    for (; i < DISPLAY_TEXT_COLS && text[i] != '\0'; i++)
         ESP_RETURN_ON_ERROR(lcd_data((uint8_t)text[i]), TAG, "lcd write char");
-    for (; i < LCD_COLS; i++)
+    for (; i < DISPLAY_TEXT_COLS; i++)
         ESP_RETURN_ON_ERROR(lcd_data(' '), TAG, "lcd pad char");
     return ESP_OK;
 }
@@ -297,160 +300,6 @@ static esp_err_t oled_cmd2(uint8_t cmd, uint8_t arg)
     return oled_tx(bytes, sizeof(bytes));
 }
 
-static const uint8_t *oled_glyph(char ch)
-{
-    static const uint8_t blank[OLED_FONT_WIDTH] = {0x00, 0x00, 0x00, 0x00, 0x00};
-    static const uint8_t bang[OLED_FONT_WIDTH] = {0x00, 0x00, 0x5F, 0x00, 0x00};
-    static const uint8_t dash[OLED_FONT_WIDTH] = {0x08, 0x08, 0x08, 0x08, 0x08};
-    static const uint8_t dot[OLED_FONT_WIDTH] = {0x00, 0x60, 0x60, 0x00, 0x00};
-    static const uint8_t slash[OLED_FONT_WIDTH] = {0x20, 0x10, 0x08, 0x04, 0x02};
-    static const uint8_t colon[OLED_FONT_WIDTH] = {0x00, 0x36, 0x36, 0x00, 0x00};
-    static const uint8_t greater[OLED_FONT_WIDTH] = {0x00, 0x41, 0x22, 0x14, 0x08};
-    static const uint8_t digit0[OLED_FONT_WIDTH] = {0x3E, 0x51, 0x49, 0x45, 0x3E};
-    static const uint8_t digit1[OLED_FONT_WIDTH] = {0x00, 0x42, 0x7F, 0x40, 0x00};
-    static const uint8_t digit2[OLED_FONT_WIDTH] = {0x42, 0x61, 0x51, 0x49, 0x46};
-    static const uint8_t digit3[OLED_FONT_WIDTH] = {0x21, 0x41, 0x45, 0x4B, 0x31};
-    static const uint8_t digit4[OLED_FONT_WIDTH] = {0x18, 0x14, 0x12, 0x7F, 0x10};
-    static const uint8_t digit5[OLED_FONT_WIDTH] = {0x27, 0x45, 0x45, 0x45, 0x39};
-    static const uint8_t digit6[OLED_FONT_WIDTH] = {0x3C, 0x4A, 0x49, 0x49, 0x30};
-    static const uint8_t digit7[OLED_FONT_WIDTH] = {0x01, 0x71, 0x09, 0x05, 0x03};
-    static const uint8_t digit8[OLED_FONT_WIDTH] = {0x36, 0x49, 0x49, 0x49, 0x36};
-    static const uint8_t digit9[OLED_FONT_WIDTH] = {0x06, 0x49, 0x49, 0x29, 0x1E};
-    static const uint8_t glyph_a[OLED_FONT_WIDTH] = {0x20, 0x54, 0x54, 0x54, 0x78};
-    static const uint8_t glyph_b[OLED_FONT_WIDTH] = {0x7F, 0x48, 0x44, 0x44, 0x38};
-    static const uint8_t glyph_c[OLED_FONT_WIDTH] = {0x38, 0x44, 0x44, 0x44, 0x20};
-    static const uint8_t glyph_d[OLED_FONT_WIDTH] = {0x38, 0x44, 0x44, 0x48, 0x7F};
-    static const uint8_t glyph_e[OLED_FONT_WIDTH] = {0x38, 0x54, 0x54, 0x54, 0x18};
-    static const uint8_t glyph_f[OLED_FONT_WIDTH] = {0x08, 0x7E, 0x09, 0x01, 0x02};
-    static const uint8_t glyph_g[OLED_FONT_WIDTH] = {0x08, 0x54, 0x54, 0x54, 0x3C};
-    static const uint8_t glyph_h[OLED_FONT_WIDTH] = {0x7F, 0x08, 0x04, 0x04, 0x78};
-    static const uint8_t glyph_i[OLED_FONT_WIDTH] = {0x00, 0x44, 0x7D, 0x40, 0x00};
-    static const uint8_t glyph_k[OLED_FONT_WIDTH] = {0x7F, 0x10, 0x28, 0x44, 0x00};
-    static const uint8_t glyph_l[OLED_FONT_WIDTH] = {0x00, 0x41, 0x7F, 0x40, 0x00};
-    static const uint8_t glyph_n[OLED_FONT_WIDTH] = {0x7C, 0x08, 0x04, 0x04, 0x78};
-    static const uint8_t glyph_o[OLED_FONT_WIDTH] = {0x38, 0x44, 0x44, 0x44, 0x38};
-    static const uint8_t glyph_p[OLED_FONT_WIDTH] = {0x7C, 0x14, 0x14, 0x14, 0x08};
-    static const uint8_t glyph_r[OLED_FONT_WIDTH] = {0x7C, 0x08, 0x04, 0x04, 0x08};
-    static const uint8_t glyph_s[OLED_FONT_WIDTH] = {0x48, 0x54, 0x54, 0x54, 0x20};
-    static const uint8_t glyph_t[OLED_FONT_WIDTH] = {0x04, 0x3F, 0x44, 0x40, 0x20};
-    static const uint8_t glyph_v[OLED_FONT_WIDTH] = {0x1C, 0x20, 0x40, 0x20, 0x1C};
-    static const uint8_t glyph_y[OLED_FONT_WIDTH] = {0x0C, 0x50, 0x50, 0x50, 0x3C};
-    static const uint8_t glyph_A[OLED_FONT_WIDTH] = {0x7E, 0x11, 0x11, 0x11, 0x7E};
-    static const uint8_t glyph_B[OLED_FONT_WIDTH] = {0x7F, 0x49, 0x49, 0x49, 0x36};
-    static const uint8_t glyph_C[OLED_FONT_WIDTH] = {0x3E, 0x41, 0x41, 0x41, 0x22};
-    static const uint8_t glyph_F[OLED_FONT_WIDTH] = {0x7F, 0x09, 0x09, 0x09, 0x01};
-    static const uint8_t glyph_H[OLED_FONT_WIDTH] = {0x7F, 0x08, 0x08, 0x08, 0x7F};
-    static const uint8_t glyph_I[OLED_FONT_WIDTH] = {0x00, 0x41, 0x7F, 0x41, 0x00};
-    static const uint8_t glyph_K[OLED_FONT_WIDTH] = {0x7F, 0x08, 0x14, 0x22, 0x41};
-    static const uint8_t glyph_L[OLED_FONT_WIDTH] = {0x7F, 0x40, 0x40, 0x40, 0x40};
-    static const uint8_t glyph_N[OLED_FONT_WIDTH] = {0x7F, 0x02, 0x0C, 0x10, 0x7F};
-    static const uint8_t glyph_O[OLED_FONT_WIDTH] = {0x3E, 0x41, 0x41, 0x41, 0x3E};
-    static const uint8_t glyph_P[OLED_FONT_WIDTH] = {0x7F, 0x09, 0x09, 0x09, 0x06};
-    static const uint8_t glyph_S[OLED_FONT_WIDTH] = {0x46, 0x49, 0x49, 0x49, 0x31};
-    static const uint8_t glyph_T[OLED_FONT_WIDTH] = {0x01, 0x01, 0x7F, 0x01, 0x01};
-    static const uint8_t glyph_U[OLED_FONT_WIDTH] = {0x3F, 0x40, 0x40, 0x40, 0x3F};
-    static const uint8_t glyph_W[OLED_FONT_WIDTH] = {0x7F, 0x20, 0x18, 0x20, 0x7F};
-    static const uint8_t glyph_Y[OLED_FONT_WIDTH] = {0x07, 0x08, 0x70, 0x08, 0x07};
-
-    if (ch >= '0' && ch <= '9')
-    {
-        static const uint8_t *const digits[10] = {
-            digit0, digit1, digit2, digit3, digit4, digit5, digit6, digit7, digit8, digit9,
-        };
-        return digits[ch - '0'];
-    }
-
-    switch (ch)
-    {
-    case ' ':
-        return blank;
-    case '!':
-        return bang;
-    case '-':
-        return dash;
-    case '.':
-        return dot;
-    case ':':
-        return colon;
-    case '/':
-        return slash;
-    case '>':
-        return greater;
-    case 'A':
-        return glyph_A;
-    case 'B':
-        return glyph_B;
-    case 'C':
-        return glyph_C;
-    case 'F':
-        return glyph_F;
-    case 'H':
-        return glyph_H;
-    case 'I':
-        return glyph_I;
-    case 'K':
-        return glyph_K;
-    case 'L':
-        return glyph_L;
-    case 'N':
-        return glyph_N;
-    case 'O':
-        return glyph_O;
-    case 'P':
-        return glyph_P;
-    case 'S':
-        return glyph_S;
-    case 'T':
-        return glyph_T;
-    case 'U':
-        return glyph_U;
-    case 'W':
-        return glyph_W;
-    case 'Y':
-        return glyph_Y;
-    case 'a':
-        return glyph_a;
-    case 'b':
-        return glyph_b;
-    case 'c':
-        return glyph_c;
-    case 'd':
-        return glyph_d;
-    case 'e':
-        return glyph_e;
-    case 'f':
-        return glyph_f;
-    case 'g':
-        return glyph_g;
-    case 'h':
-        return glyph_h;
-    case 'i':
-        return glyph_i;
-    case 'k':
-        return glyph_k;
-    case 'l':
-        return glyph_l;
-    case 'n':
-        return glyph_n;
-    case 'o':
-        return glyph_o;
-    case 'p':
-        return glyph_p;
-    case 'r':
-        return glyph_r;
-    case 's':
-        return glyph_s;
-    case 't':
-        return glyph_t;
-    case 'v':
-        return glyph_v;
-    case 'y':
-        return glyph_y;
-    default:
-        return blank;
-    }
-}
-
 static esp_err_t oled_clear(void)
 {
     uint8_t line[1 + OLED_WIDTH];
@@ -478,18 +327,18 @@ static esp_err_t oled_set_cursor(uint8_t row, uint8_t col)
 
 static esp_err_t oled_write_padded(const char *text)
 {
-    uint8_t bytes[1 + LCD_COLS * OLED_CELL_WIDTH];
+    uint8_t bytes[1 + DISPLAY_TEXT_COLS * OLED_CELL_WIDTH];
     bytes[0] = 0x40;
     size_t out = 1;
     bool padding = false;
 
-    for (size_t i = 0; i < LCD_COLS; i++)
+    for (size_t i = 0; i < DISPLAY_TEXT_COLS; i++)
     {
         if (!padding && text[i] == '\0')
             padding = true;
         const char ch = padding ? ' ' : text[i];
-        const uint8_t *glyph = oled_glyph(ch);
-        for (size_t j = 0; j < OLED_FONT_WIDTH; j++)
+        const uint8_t *glyph = tinyblok_oled_glyph(ch);
+        for (size_t j = 0; j < TINYBLOK_OLED_GLYPH_WIDTH; j++)
             bytes[out++] = glyph[j];
         bytes[out++] = 0x00;
     }
@@ -700,8 +549,8 @@ static esp_err_t display_init_hw(void)
 
 static void draw_connecting(uint32_t tick)
 {
-    char line1[LCD_COLS + 1];
-    char line2[LCD_COLS + 1];
+    char line1[DISPLAY_TEXT_COLS + 1];
+    char line2[DISPLAY_TEXT_COLS + 1];
     snprintf(line1, sizeof(line1), "Hello!");
     snprintf(line2, sizeof(line2), "WiFi%.*s", (int)(tick % 4), "...");
     active_display->set_cursor(0, 0);
@@ -752,9 +601,9 @@ static void draw_status(void)
     copy = state;
     portEXIT_CRITICAL(&state_mux);
 
-    char line1[LCD_COLS + 1];
-    char line2[LCD_COLS + 1];
-    char line3[LCD_COLS + 1];
+    char line1[DISPLAY_TEXT_COLS + 1];
+    char line2[DISPLAY_TEXT_COLS + 1];
+    char line3[DISPLAY_TEXT_COLS + 1];
     snprintf(line1, sizeof(line1), "tinyblok NATS %s",
              copy.nats_ip[0] != '\0' ? "OK" : "--");
     snprintf(line2, sizeof(line2), "PUBs: %lu", (unsigned long)tinyblok_pub_count());
@@ -793,7 +642,7 @@ static void display_task(void *arg)
 
     active_display->clear();
     active_display->set_cursor(0, 0);
-    char splash[LCD_COLS + 1];
+    char splash[DISPLAY_TEXT_COLS + 1];
     snprintf(splash, sizeof(splash), "tinyblok v%.6s", TINYBLOK_VERSION);
     active_display->write_padded(splash);
     vTaskDelay(pdMS_TO_TICKS(1000));

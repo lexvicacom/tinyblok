@@ -19,7 +19,9 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 
 ## First-Time Setup
 
-1. Flash the firmware.
+1. Flash the firmware. For browser-based flashing, serve `docs/install.html`
+   from GitHub Pages with the release binaries published under
+   `docs/firmware/latest/`.
 2. Join the `TINYBLOK` Wi-Fi network advertised by the device.
 3. The captive portal should open automatically. If it does not, open `http://10.42.0.1`.
 4. Enter Wi-Fi, device name, and NATS settings.

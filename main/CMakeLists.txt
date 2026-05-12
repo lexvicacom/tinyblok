@@ -9,6 +9,10 @@ idf_component_register(
                   esp_http_server mdns
 )
 
+# Resolve a python interpreter once at configure time. Override with
+# `cmake -DPython3_EXECUTABLE=/path/to/python` if needed.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 file(READ ${CMAKE_SOURCE_DIR}/build.zig.zon TINYBLOK_ZON)
 string(REGEX MATCH "\\.version[ \t\r\n]*=[ \t\r\n]*\"([^\"]+)\"" _tinyblok_version_match "${TINYBLOK_ZON}")
 if(CMAKE_MATCH_1)
@@ -17,6 +21,34 @@ else()
     set(TINYBLOK_VERSION "dev")
 endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYBLOK_VERSION=\"${TINYBLOK_VERSION}\")
+
+set(RSRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rsrc)
+set(GEN_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(SETUP_HTML_HEADER ${GEN_INCLUDE_DIR}/tinyblok_setup_html.h)
+set(CAPTIVE_HTML_HEADER ${GEN_INCLUDE_DIR}/tinyblok_captive_html.h)
+find_program(XXD_EXECUTABLE xxd REQUIRED)
+
+add_custom_command(
+    OUTPUT ${SETUP_HTML_HEADER}
+    COMMAND ${XXD_EXECUTABLE} -i -n tinyblok_setup_html ${RSRC_DIR}/setup.html ${SETUP_HTML_HEADER}
+    DEPENDS ${RSRC_DIR}/setup.html
+    COMMENT "Embedding setup.html"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${CAPTIVE_HTML_HEADER}
+    COMMAND ${XXD_EXECUTABLE} -i -n tinyblok_captive_html ${RSRC_DIR}/captive.html ${CAPTIVE_HTML_HEADER}
+    DEPENDS ${RSRC_DIR}/captive.html
+    COMMENT "Embedding captive.html"
+    VERBATIM
+)
+
+add_custom_target(tinyblok_web_assets DEPENDS ${SETUP_HTML_HEADER} ${CAPTIVE_HTML_HEADER})
+add_dependencies(${COMPONENT_LIB} tinyblok_web_assets)
+target_include_directories(${COMPONENT_LIB} PRIVATE ${GEN_INCLUDE_DIR})
+set_source_files_properties(c/tinyblok_web.c PROPERTIES
+    OBJECT_DEPENDS "${SETUP_HTML_HEADER};${CAPTIVE_HTML_HEADER}")
 
 if(CONFIG_TINYBLOK_NATS_TLS)
     idf_component_optional_requires(PRIVATE esp-tls mbedtls)
@@ -53,10 +85,6 @@ set(ZIG_LIB ${ZIG_OUT_DIR}/libtinyblok.a)
 # Match the riscv32 ABI/feature set ESP-IDF's GCC uses for the C6 HP core.
 set(ZIG_TARGET "riscv32-freestanding-none")
 set(ZIG_CPU "generic_rv32+m+a+c+zicsr+zifencei")
-
-# Resolve a python interpreter once at configure time. Override with
-# `cmake -DPython3_EXECUTABLE=/path/to/python` if needed.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # Codegen: regenerate main/zig/rules.zig whenever patchbay.edn or gen.py changes.
 # rules.zig is gitignored; this is the canonical source-of-truth invocation.

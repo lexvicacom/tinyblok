@@ -14,8 +14,15 @@
 #include "sdkconfig.h"
 
 static const char *TAG = "tinyblok_wifi";
-static const char *SETUP_AP_SSID = "TINYBLOK";
-static char captive_portal_uri[] = "http://10.42.0.1/";
+
+#define SETUP_AP_SSID "TINYBLOK"
+#define SETUP_AP_IP_A 10
+#define SETUP_AP_IP_B 42
+#define SETUP_AP_IP_C 0
+#define SETUP_AP_IP_D 1
+#define SETUP_AP_URL "http://10.42.0.1/"
+
+static char captive_portal_uri[] = SETUP_AP_URL;
 
 #define WIFI_GOT_IP_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
@@ -113,10 +120,10 @@ static size_t dns_build_reply(uint8_t *buf, size_t len)
     buf[off++] = 0x3C;
     buf[off++] = 0x00;
     buf[off++] = 0x04;
-    buf[off++] = 10;
-    buf[off++] = 42;
-    buf[off++] = 0;
-    buf[off++] = 1;
+    buf[off++] = SETUP_AP_IP_A;
+    buf[off++] = SETUP_AP_IP_B;
+    buf[off++] = SETUP_AP_IP_C;
+    buf[off++] = SETUP_AP_IP_D;
     return off;
 }
 
@@ -129,6 +136,7 @@ static void dns_task(void *arg)
         ESP_LOGW(TAG, "dns socket failed");
         dns_task_handle = NULL;
         vTaskDelete(NULL);
+        return;
     }
 
     struct sockaddr_in addr = {0};
@@ -141,9 +149,10 @@ static void dns_task(void *arg)
         close(fd);
         dns_task_handle = NULL;
         vTaskDelete(NULL);
+        return;
     }
 
-    ESP_LOGI(TAG, "setup DNS responder started: captive queries -> 10.42.0.1");
+    ESP_LOGI(TAG, "setup DNS responder started: captive queries -> " SETUP_AP_URL);
     for (;;)
     {
         uint8_t buf[512];
@@ -175,13 +184,17 @@ static esp_err_t ensure_wifi(void)
         ESP_RETURN_ON_FALSE(wifi_events, ESP_ERR_NO_MEM, TAG, "create wifi event group");
     }
     if (!sta_netif)
+    {
         sta_netif = esp_netif_create_default_wifi_sta();
+        ESP_RETURN_ON_FALSE(sta_netif, ESP_ERR_NO_MEM, TAG, "create STA netif");
+    }
     if (!ap_netif)
     {
         ap_netif = esp_netif_create_default_wifi_ap();
+        ESP_RETURN_ON_FALSE(ap_netif, ESP_ERR_NO_MEM, TAG, "create AP netif");
         esp_netif_ip_info_t ip = {0};
-        esp_netif_set_ip4_addr(&ip.ip, 10, 42, 0, 1);
-        esp_netif_set_ip4_addr(&ip.gw, 10, 42, 0, 1);
+        esp_netif_set_ip4_addr(&ip.ip, SETUP_AP_IP_A, SETUP_AP_IP_B, SETUP_AP_IP_C, SETUP_AP_IP_D);
+        esp_netif_set_ip4_addr(&ip.gw, SETUP_AP_IP_A, SETUP_AP_IP_B, SETUP_AP_IP_C, SETUP_AP_IP_D);
         esp_netif_set_ip4_addr(&ip.netmask, 255, 255, 255, 0);
         esp_err_t dhcp_err = esp_netif_dhcps_stop(ap_netif);
         if (dhcp_err != ESP_OK && dhcp_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
@@ -227,7 +240,7 @@ static esp_err_t configure_setup_dhcp(void)
     err = esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
                                  &offer_router, sizeof(offer_router));
     if (err != ESP_OK)
-        ESP_LOGW(TAG, "disable setup DHCP router option: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "enable setup DHCP router option: %s", esp_err_to_name(err));
 
     return ESP_OK;
 }

@@ -1,5 +1,5 @@
-// Minimum-viable NATS client. Plaintext or TLS-via-INFO-upgrade per Kconfig;
-// auth none / user+pass / .creds (JWT + Ed25519 nonce sig).
+// Minimum-viable NATS client. Runtime config selects plaintext/TLS and
+// auth mode; Kconfig only decides which support code is compiled in.
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -22,13 +22,6 @@
 #ifndef CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 #define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
 #endif
-#ifndef CONFIG_TINYBLOK_NATS_AUTH_USERPASS
-#define CONFIG_TINYBLOK_NATS_AUTH_USERPASS 0
-#endif
-#ifndef CONFIG_TINYBLOK_NATS_AUTH_CREDS
-#define CONFIG_TINYBLOK_NATS_AUTH_CREDS 0
-#endif
-
 #include "app_events.h"
 #ifdef ESP_PLATFORM
 #include "tinyblok_config.h"
@@ -43,7 +36,7 @@
 #endif
 #endif
 
-#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 #include "creds.h"
 #endif
 
@@ -355,7 +348,7 @@ static int tls_handshake(void)
 }
 #endif
 
-#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
 // Copies the JSON "nonce" value from INFO to `out` (NUL-terminated).
 // Returns the length, or -1 if the field is missing.
 static int extract_nonce(const char *info, size_t info_len, char *out, size_t out_cap)
@@ -380,6 +373,11 @@ static int extract_nonce(const char *info, size_t info_len, char *out, size_t ou
 // Returns the byte length of the line written to `out`, or -1 on failure.
 static int build_connect_line(const char *info, size_t info_len, char *out, size_t out_cap)
 {
+#if !defined(ESP_PLATFORM) || !CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+    (void)info;
+    (void)info_len;
+#endif
+
     char common[192];
     int n;
     int common_len = snprintf(common, sizeof(common),
@@ -445,50 +443,10 @@ static int build_connect_line(const char *info, size_t info_len, char *out, size
 #endif
     }
 #else
-#if CONFIG_TINYBLOK_NATS_AUTH_USERPASS
-    n = snprintf(out, out_cap,
-                 "CONNECT {%s,\"user\":\"%s\",\"pass\":\"%s\"}\r\n",
-                 common, CONFIG_TINYBLOK_NATS_USER, CONFIG_TINYBLOK_NATS_PASS);
-    if (n <= 0 || (size_t)n >= out_cap)
-        return -1;
-    return n;
-
-#elif CONFIG_TINYBLOK_NATS_AUTH_CREDS
-    const tinyblok_creds_t *c = tinyblok_creds_get();
-    if (!c)
-    {
-        ESP_LOGE(TAG, "creds not loaded");
-        return -1;
-    }
-
-    char nonce[128];
-    int nonce_len = extract_nonce(info, info_len, nonce, sizeof(nonce));
-    if (nonce_len <= 0)
-    {
-        ESP_LOGE(TAG, "no nonce in INFO; broker may not require auth");
-        return -1;
-    }
-
-    unsigned char sig[64];
-    if (tinyblok_creds_sign((const unsigned char *)nonce, (size_t)nonce_len, sig) != 0)
-        return -1;
-
-    char sig_b64[96];
-    tinyblok_b64url_encode(sig, 64, sig_b64);
-
-    int n = snprintf(out, out_cap,
-                     "CONNECT {%s,\"jwt\":\"%s\",\"sig\":\"%s\"}\r\n",
-                     common, c->jwt, sig_b64);
-    if (n <= 0 || (size_t)n >= out_cap)
-        return -1;
-    return n;
-
-#else
     n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
     if (n <= 0 || (size_t)n >= out_cap)
         return -1;
     return n;
-#endif
 #endif
 
     n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
