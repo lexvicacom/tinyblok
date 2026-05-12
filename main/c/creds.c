@@ -9,7 +9,18 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
-#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#ifndef CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+#define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
+#endif
+#ifndef CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#define CONFIG_TINYBLOK_NATS_AUTH_CREDS 0
+#endif
+
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
+
+#ifdef ESP_PLATFORM
+#include "tinyblok_config.h"
+#endif
 
 extern int tinyblok_ed25519_sign(const unsigned char seed[32],
                                  const unsigned char *msg, size_t msg_len,
@@ -17,9 +28,11 @@ extern int tinyblok_ed25519_sign(const unsigned char seed[32],
 
 static const char *TAG = "creds";
 
-// Linker symbols populated by EMBED_TXTFILES in main/CMakeLists.txt.
+#ifndef ESP_PLATFORM
+// Linker symbols populated by EMBED_TXTFILES in host/legacy builds.
 extern const char nats_creds_start[] asm("_binary_nats_creds_start");
 extern const char nats_creds_end[] asm("_binary_nats_creds_end");
+#endif
 
 static tinyblok_creds_t g_creds;
 static char g_jwt_buf[2048];
@@ -148,11 +161,27 @@ int tinyblok_creds_load(void)
     if (g_loaded)
         return 0;
 
+#ifdef ESP_PLATFORM
+    tinyblok_config_t cfg;
+    esp_err_t err = tinyblok_config_load(&cfg);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "config load failed: %s", esp_err_to_name(err));
+        return -1;
+    }
+    const char *blob = cfg.nats_creds;
+    size_t blob_len = strnlen(cfg.nats_creds, sizeof(cfg.nats_creds));
+    if (blob_len == 0)
+    {
+        ESP_LOGE(TAG, "no NATS .creds file stored");
+        return -1;
+    }
+#else
     const char *blob = nats_creds_start;
     size_t blob_len = (size_t)(nats_creds_end - nats_creds_start);
-    // EMBED_TXTFILES appends a NUL that isn't part of the content.
     if (blob_len > 0 && blob[blob_len - 1] == '\0')
         blob_len--;
+#endif
 
     const char *jwt_start;
     size_t jwt_len;
@@ -226,7 +255,7 @@ int tinyblok_creds_sign(const unsigned char *msg, size_t msg_len, unsigned char 
     return tinyblok_ed25519_sign(g_creds.seed, msg, msg_len, sig_out);
 }
 
-#else // CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#else // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
 
 // Link-clean stubs for builds without creds auth.
 int tinyblok_creds_load(void) { return -1; }
@@ -247,4 +276,4 @@ size_t tinyblok_b64url_encode(const unsigned char *in, size_t len, char *out)
     return 0;
 }
 
-#endif // CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#endif // CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS

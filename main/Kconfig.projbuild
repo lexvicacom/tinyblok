@@ -1,47 +1,65 @@
 menu "tinyblok"
 
     config TINYBLOK_WIFI_SSID
-        string "Wi-Fi SSID"
+        string "Default Wi-Fi SSID"
         default "myssid"
         help
-            SSID for the Wi-Fi network the device joins on boot.
+            Build-time default copied into runtime config before the user
+            saves settings in the setup portal.
 
     config TINYBLOK_WIFI_PASSWORD
-        string "Wi-Fi password"
+        string "Default Wi-Fi password"
         default ""
         help
-            Passphrase for the Wi-Fi network. Leave empty for an open AP.
+            Build-time default copied into runtime config before the user
+            saves settings in the setup portal. Leave empty for an open AP.
+
+    config TINYBLOK_SETUP_AP_SSID
+        string "Setup portal SoftAP SSID"
+        default "tinyblok-setup"
+        help
+            SSID used when the device has no saved runtime Wi-Fi settings.
+
+    config TINYBLOK_SETUP_AP_PASSWORD
+        string "Setup portal SoftAP password"
+        default ""
+        help
+            Optional setup AP passphrase. Leave empty for an open setup AP.
+            WPA2 is used when this is at least 8 characters.
+
+    config TINYBLOK_DEVICE_NAME
+        string "Default device name"
+        default "tinyblok"
+        help
+            Build-time default used before runtime settings are saved.
 
     config TINYBLOK_NATS_HOST
-        string "NATS broker host"
+        string "Default NATS broker host"
         default "192.168.1.100"
         help
             Hostname or dotted-quad IP of the NATS broker the device
             publishes to. No DNS resolution beyond what lwIP does.
 
     config TINYBLOK_NATS_PORT
-        int "NATS broker port"
+        int "Default NATS broker port"
         default 4222
         range 1 65535
         help
             TCP port of the NATS broker. Standard is 4222.
 
-    config TINYBLOK_NATS_CLIENT_NAME
-        string "NATS client name"
+    config TINYBLOK_NATS_BASE_TOPIC
+        string "Default NATS base topic"
         default "tinyblok"
         help
-            Sent in the CONNECT JSON as the `name` field. Surfaced in
-            nats-server logs and the monitoring port (`/connz`) so a
-            broker operator can tell devices apart. Cosmetic only —
-            access control is handled separately via auth.
+            Runtime-configurable topic prefix reserved for user-facing flows.
+            The current patchbay rules still publish their generated subjects.
 
     config TINYBLOK_NATS_TLS
-        bool "Use TLS for NATS connection"
-        default n
+        bool "Enable runtime NATS TLS support"
+        default y
         help
-            Connect to the broker over TLS via esp-tls / mbedTLS.
-            Adds ~100 KB flash and ~30 KB RAM. Leave off for a
-            plaintext broker on a trusted LAN.
+            Compile in TLS support for the NATS client. The setup portal
+            still decides at runtime whether an individual broker uses TLS.
 
             Uses NATS' INFO-first TLS flow: the broker sends plaintext
             INFO, then the client upgrades to TLS before CONNECT.
@@ -55,55 +73,32 @@ menu "tinyblok"
             broker's certificate. Disable for self-signed brokers
             (insecure: skips verification).
 
-    choice TINYBLOK_NATS_AUTH
-        prompt "NATS authentication"
-        default TINYBLOK_NATS_AUTH_NONE
-
-        config TINYBLOK_NATS_AUTH_NONE
-            bool "None"
-            help
-                No authentication; CONNECT carries only verbose/pedantic.
-
-        config TINYBLOK_NATS_AUTH_USERPASS
-            bool "Username + password"
-            help
-                Send user / pass fields in CONNECT. Plaintext over the
-                wire unless TLS is also enabled.
-
-        config TINYBLOK_NATS_AUTH_CREDS
-            bool "NATS .creds file (JWT + NKey seed)"
-            select TINYBLOK_NATS_TLS
-            help
-                Embed a NATS .creds file at build time. Sends the user
-                JWT and a signature of the server's nonce, signed with
-                the seed's Ed25519 key.
-
-                Creds auth force-enables TLS — sending a JWT over
-                plaintext defeats the point.
-
-                The .creds file is read from secrets/nats.creds at build
-                time. A nats.creds.example is checked in; the real file
-                is gitignored.
-    endchoice
-
-    config TINYBLOK_NATS_USER
-        string "NATS username"
-        depends on TINYBLOK_NATS_AUTH_USERPASS
-        default ""
-
-    config TINYBLOK_NATS_PASS
-        string "NATS password"
-        depends on TINYBLOK_NATS_AUTH_USERPASS
-        default ""
-
-    config TINYBLOK_NATS_CREDS_FILE
-        string "Path to .creds file (relative to project root)"
-        depends on TINYBLOK_NATS_AUTH_CREDS
-        default "secrets/nats.creds"
+    config TINYBLOK_NATS_CREDS_SUPPORT
+        bool "Enable runtime NATS .creds auth support"
+        depends on TINYBLOK_NATS_TLS
+        default y
         help
-            Path is resolved against the project root (the directory
-            containing the top-level CMakeLists.txt). The file is
-            embedded into the firmware image at build time.
+            Compile in the .creds parser and Ed25519 signer. The .creds
+            text is uploaded through the setup portal and stored in NVS;
+            no per-user secret is embedded in firmware.
+
+    config TINYBLOK_DISPLAY_ENABLED_DEFAULT
+        bool "Display enabled by default"
+        default y
+
+    config TINYBLOK_DISPLAY_BRIGHTNESS_DEFAULT
+        int "Display brightness default"
+        default 255
+        range 0 255
+
+    config TINYBLOK_SAMPLE_INTERVAL_MS
+        int "Default sample interval (ms)"
+        default 1000
+        range 100 86400000
+
+    config TINYBLOK_TIMEZONE
+        string "Default timezone"
+        default "UTC"
 
     choice TINYBLOK_DISPLAY_OLED_SIZE
         prompt "SSD1306 OLED size"

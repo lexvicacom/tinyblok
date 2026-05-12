@@ -73,6 +73,7 @@ static const char *TAG = "display";
 typedef struct
 {
     bool wifi_connected;
+    bool setup_portal;
     char ssid[33];
     char ip[16];
     char nats_host[64];
@@ -111,6 +112,18 @@ void tinyblok_display_wifi_connecting(const char *ssid)
 {
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = false;
+    state.setup_portal = false;
+    strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
+    state.ip[0] = '\0';
+    portEXIT_CRITICAL(&state_mux);
+    display_notify();
+}
+
+void tinyblok_display_setup_portal(const char *ssid)
+{
+    portENTER_CRITICAL(&state_mux);
+    state.wifi_connected = false;
+    state.setup_portal = true;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     state.ip[0] = '\0';
     portEXIT_CRITICAL(&state_mux);
@@ -121,6 +134,7 @@ void tinyblok_display_wifi_connected(const char *ssid, const esp_ip4_addr_t *ip)
 {
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = true;
+    state.setup_portal = false;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     if (ip != NULL)
         snprintf(state.ip, sizeof(state.ip), IPSTR, IP2STR(ip));
@@ -134,6 +148,7 @@ void tinyblok_display_wifi_disconnected(void)
 {
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = false;
+    state.setup_portal = false;
     state.ip[0] = '\0';
     portEXIT_CRITICAL(&state_mux);
     display_notify();
@@ -666,6 +681,24 @@ static void draw_connecting(uint32_t tick)
     }
 }
 
+static void draw_setup_portal(void)
+{
+    display_state_t copy;
+    portENTER_CRITICAL(&state_mux);
+    copy = state;
+    portEXIT_CRITICAL(&state_mux);
+
+    active_display->set_cursor(0, 0);
+    active_display->write_padded("WiFi ->");
+    active_display->set_cursor(1, 0);
+    active_display->write_padded(copy.ssid);
+    if (active_display->rows > 2)
+    {
+        active_display->set_cursor(2, 0);
+        active_display->write_padded("tinyblok.setup");
+    }
+}
+
 static void draw_status(void)
 {
     display_state_t copy;
@@ -730,7 +763,9 @@ static void display_task(void *arg)
         copy = state;
         portEXIT_CRITICAL(&state_mux);
 
-        if (copy.wifi_connected)
+        if (copy.setup_portal)
+            draw_setup_portal();
+        else if (copy.wifi_connected)
             draw_status();
         else
             draw_connecting(anim_tick++);

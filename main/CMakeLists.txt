@@ -3,8 +3,10 @@
 # applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
     SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c" "c/app_events.c" "c/display.c"
+         "c/tinyblok_config.c" "c/tinyblok_wifi.c" "c/tinyblok_web.c"
     INCLUDE_DIRS "c"
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_driver_i2c esp_driver_gpio esp_wifi esp_event esp_netif nvs_flash lwip
+                  esp_http_server cjson mdns
 )
 
 file(READ ${CMAKE_SOURCE_DIR}/build.zig.zon TINYBLOK_ZON)
@@ -20,10 +22,8 @@ if(CONFIG_TINYBLOK_NATS_TLS)
     idf_component_optional_requires(PRIVATE esp-tls mbedtls)
 endif()
 
-# Embed the .creds file as a NUL-terminated text blob accessible via the
-# `_binary_nats_creds_start` / `_binary_nats_creds_end` linker symbols, and
-# pull in monocypher for Ed25519 signing. Both only when creds auth is on.
-if(CONFIG_TINYBLOK_NATS_AUTH_CREDS)
+# Runtime .creds support parses the uploaded NVS blob and signs server nonces.
+if(CONFIG_TINYBLOK_NATS_CREDS_SUPPORT)
     target_sources(${COMPONENT_LIB} PRIVATE "c/tweetnacl.c" "c/ed25519.c")
     # TweetNaCl predates GCC 14's stricter -Wunterminated-string-initialization
     # and uses `static const u8 sigma[16] = "expand 32-byte k"` (17 chars
@@ -32,16 +32,6 @@ if(CONFIG_TINYBLOK_NATS_AUTH_CREDS)
     set_source_files_properties(c/tweetnacl.c PROPERTIES
         COMPILE_FLAGS "-Wno-error=unterminated-string-initialization")
 
-    set(CREDS_FILE ${CMAKE_SOURCE_DIR}/${CONFIG_TINYBLOK_NATS_CREDS_FILE})
-    if(NOT EXISTS ${CREDS_FILE})
-        message(FATAL_ERROR
-            "TINYBLOK_NATS_AUTH_CREDS is enabled but ${CREDS_FILE} does not exist. "
-            "Generate one with `nsc generate creds -a <account> -n <user>` "
-            "or copy secrets/nats.creds.example as a starting point. "
-            "Path is configurable via CONFIG_TINYBLOK_NATS_CREDS_FILE.")
-    endif()
-    target_add_binary_data(${COMPONENT_LIB} ${CREDS_FILE} TEXT
-                           RENAME_TO nats_creds)
 endif()
 
 set(ZIG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/zig/main.zig)

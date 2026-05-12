@@ -19,7 +19,20 @@
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
 
+#ifndef CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+#define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
+#endif
+#ifndef CONFIG_TINYBLOK_NATS_AUTH_USERPASS
+#define CONFIG_TINYBLOK_NATS_AUTH_USERPASS 0
+#endif
+#ifndef CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#define CONFIG_TINYBLOK_NATS_AUTH_CREDS 0
+#endif
+
 #include "app_events.h"
+#ifdef ESP_PLATFORM
+#include "tinyblok_config.h"
+#endif
 
 #if CONFIG_TINYBLOK_NATS_TLS
 #include "mbedtls/ssl.h"
@@ -30,7 +43,7 @@
 #endif
 #endif
 
-#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
 #include "creds.h"
 #endif
 
@@ -54,6 +67,9 @@ extern void tinyblok_nats_handle_msg(const unsigned char *subject, size_t subjec
 
 static int sock = -1;
 static int nats_connected = 0;
+#ifdef ESP_PLATFORM
+static tinyblok_config_t nats_cfg;
+#endif
 
 #if CONFIG_TINYBLOK_NATS_TLS
 static int tls_active = 0;
@@ -76,6 +92,30 @@ static int64_t last_connect_attempt_us = 0;
 // the "maximum active connections" error indefinitely.
 #define RECONNECT_AFTER_ERR_US (60LL * 1000 * 1000)
 static int64_t backoff_until_us = 0;
+
+#ifdef ESP_PLATFORM
+static int load_runtime_config(void)
+{
+    esp_err_t err = tinyblok_config_load(&nats_cfg);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "config load failed: %s", esp_err_to_name(err));
+        return -1;
+    }
+    return 0;
+}
+
+static const char *runtime_host(void) { return nats_cfg.nats_host; }
+static int runtime_port(void) { return nats_cfg.nats_port; }
+static const char *runtime_name(void) { return nats_cfg.device_name[0] ? nats_cfg.device_name : "tinyblok"; }
+static int runtime_tls_enabled(void) { return nats_cfg.nats_tls; }
+#else
+static int load_runtime_config(void) { return 0; }
+static const char *runtime_host(void) { return CONFIG_TINYBLOK_NATS_HOST; }
+static int runtime_port(void) { return CONFIG_TINYBLOK_NATS_PORT; }
+static const char *runtime_name(void) { return CONFIG_TINYBLOK_NATS_CLIENT_NAME; }
+static int runtime_tls_enabled(void) { return CONFIG_TINYBLOK_NATS_TLS; }
+#endif
 
 #if CONFIG_TINYBLOK_NATS_TLS
 static int bio_send(void *ctx, const unsigned char *buf, size_t len)
@@ -302,7 +342,7 @@ static int tls_handshake(void)
 }
 #endif
 
-#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT || CONFIG_TINYBLOK_NATS_AUTH_CREDS
 // Copies the JSON "nonce" value from INFO to `out` (NUL-terminated).
 // Returns the length, or -1 if the field is missing.
 static int extract_nonce(const char *info, size_t info_len, char *out, size_t out_cap)
@@ -327,23 +367,75 @@ static int extract_nonce(const char *info, size_t info_len, char *out, size_t ou
 // Returns the byte length of the line written to `out`, or -1 on failure.
 static int build_connect_line(const char *info, size_t info_len, char *out, size_t out_cap)
 {
-    (void)info;
-    (void)info_len;
+    char common[192];
+    int n;
+    int common_len = snprintf(common, sizeof(common),
+                              "\"verbose\":false,\"pedantic\":false,"
+                              "\"name\":\"%s\",\"lang\":\"c\",\"version\":\"0.1\","
+                              "\"tls_required\":%s",
+                              runtime_name(), runtime_tls_enabled() ? "true" : "false");
+    if (common_len <= 0 || (size_t)common_len >= sizeof(common))
+        return -1;
 
-    static const char common[] =
-        "\"verbose\":false,\"pedantic\":false,"
-        "\"name\":\"" CONFIG_TINYBLOK_NATS_CLIENT_NAME "\","
-        "\"lang\":\"c\",\"version\":\"0.1\","
-#if CONFIG_TINYBLOK_NATS_TLS
-        "\"tls_required\":true";
-#else
-        "\"tls_required\":false";
-#endif
-
-#if CONFIG_TINYBLOK_NATS_AUTH_USERPASS
-    int n = snprintf(out, out_cap,
+#ifdef ESP_PLATFORM
+    if (strcmp(nats_cfg.nats_auth, "userpass") == 0)
+    {
+        n = snprintf(out, out_cap,
                      "CONNECT {%s,\"user\":\"%s\",\"pass\":\"%s\"}\r\n",
-                     common, CONFIG_TINYBLOK_NATS_USER, CONFIG_TINYBLOK_NATS_PASS);
+                     common, nats_cfg.nats_user, nats_cfg.nats_password);
+        if (n <= 0 || (size_t)n >= out_cap)
+            return -1;
+        return n;
+    }
+    if (strcmp(nats_cfg.nats_auth, "token") == 0)
+    {
+        n = snprintf(out, out_cap, "CONNECT {%s,\"auth_token\":\"%s\"}\r\n",
+                     common, nats_cfg.nats_token);
+        if (n <= 0 || (size_t)n >= out_cap)
+            return -1;
+        return n;
+    }
+    if (strcmp(nats_cfg.nats_auth, "creds") == 0)
+    {
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+        const tinyblok_creds_t *c = tinyblok_creds_get();
+        if (!c)
+        {
+            ESP_LOGE(TAG, "creds not loaded");
+            return -1;
+        }
+
+        char nonce[128];
+        int nonce_len = extract_nonce(info, info_len, nonce, sizeof(nonce));
+        if (nonce_len <= 0)
+        {
+            ESP_LOGE(TAG, "no nonce in INFO; broker may not require auth");
+            return -1;
+        }
+
+        unsigned char sig[64];
+        if (tinyblok_creds_sign((const unsigned char *)nonce, (size_t)nonce_len, sig) != 0)
+            return -1;
+
+        char sig_b64[96];
+        tinyblok_b64url_encode(sig, 64, sig_b64);
+
+        n = snprintf(out, out_cap,
+                     "CONNECT {%s,\"jwt\":\"%s\",\"sig\":\"%s\"}\r\n",
+                     common, c->jwt, sig_b64);
+        if (n <= 0 || (size_t)n >= out_cap)
+            return -1;
+        return n;
+#else
+        ESP_LOGE(TAG, ".creds auth selected but creds support is not compiled in");
+        return -1;
+#endif
+    }
+#else
+#if CONFIG_TINYBLOK_NATS_AUTH_USERPASS
+    n = snprintf(out, out_cap,
+                 "CONNECT {%s,\"user\":\"%s\",\"pass\":\"%s\"}\r\n",
+                 common, CONFIG_TINYBLOK_NATS_USER, CONFIG_TINYBLOK_NATS_PASS);
     if (n <= 0 || (size_t)n >= out_cap)
         return -1;
     return n;
@@ -379,11 +471,17 @@ static int build_connect_line(const char *info, size_t info_len, char *out, size
     return n;
 
 #else
-    int n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
+    n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
     if (n <= 0 || (size_t)n >= out_cap)
         return -1;
     return n;
 #endif
+#endif
+
+    n = snprintf(out, out_cap, "CONNECT {%s}\r\n", common);
+    if (n <= 0 || (size_t)n >= out_cap)
+        return -1;
+    return n;
 }
 
 static int send_request_subs(void)
@@ -436,8 +534,10 @@ int tinyblok_nats_reply(const unsigned char *subject, size_t subject_len,
 
 static int try_connect_once(int verbose_failure)
 {
-    const char *host = CONFIG_TINYBLOK_NATS_HOST;
-    int port = CONFIG_TINYBLOK_NATS_PORT;
+    if (load_runtime_config() != 0)
+        return -1;
+    const char *host = runtime_host();
+    int port = runtime_port();
     char peer_ip[16] = "";
 
     char port_str[8];
@@ -499,17 +599,17 @@ static int try_connect_once(int verbose_failure)
 #if CONFIG_TINYBLOK_NATS_TLS
     // We don't inspect INFO's "tls_required"; the handshake will fail
     // loudly if the broker isn't expecting TLS.
-    if (tls_init_once(host) != 0)
+    if (runtime_tls_enabled() && tls_init_once(host) != 0)
     {
         net_close();
         return -1;
     }
-    if (tls_handshake() != 0)
+    if (runtime_tls_enabled() && tls_handshake() != 0)
     {
         net_close();
         return -1;
     }
-    tls_active = 1;
+    tls_active = runtime_tls_enabled();
 #endif
 
     static char connect_line[2560];
@@ -546,11 +646,7 @@ static int try_connect_once(int verbose_failure)
         return -1;
     }
 
-#if CONFIG_TINYBLOK_NATS_TLS
-    ESP_LOGI(TAG, "connected %s:%d (tls)", host, port);
-#else
-    ESP_LOGI(TAG, "connected %s:%d", host, port);
-#endif
+    ESP_LOGI(TAG, "connected %s:%d%s", host, port, runtime_tls_enabled() ? " (tls)" : "");
     nats_connected = 1;
     tinyblok_event_publish_nats_connected(host, peer_ip, (uint16_t)port);
     ESP_LOGI(TAG, "<- %s", info_buf);
@@ -565,12 +661,21 @@ static int try_connect_once(int verbose_failure)
 
 int tinyblok_nats_connect(void)
 {
-#if CONFIG_TINYBLOK_NATS_AUTH_CREDS
-    if (tinyblok_creds_load() != 0)
-    {
-        ESP_LOGE(TAG, "creds load failed; aborting connect");
+#if CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+    if (load_runtime_config() != 0)
         return -1;
+#ifdef ESP_PLATFORM
+    if (strcmp(nats_cfg.nats_auth, "creds") == 0)
+    {
+#endif
+        if (tinyblok_creds_load() != 0)
+        {
+            ESP_LOGE(TAG, "creds load failed; aborting connect");
+            return -1;
+        }
+#ifdef ESP_PLATFORM
     }
+#endif
 #endif
     last_connect_attempt_us = esp_timer_get_time();
     return try_connect_once(1);
