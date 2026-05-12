@@ -19,7 +19,6 @@ p,li{color:#c3d0c0;line-height:1.55}
 .panel p,.panel li{color:#334039}
 esp-web-install-button{display:block;margin:18px 0}
 code{background:#e8e4d7;padding:2px 5px;border-radius:4px}
-a{color:#9ff0a8}
 .repo{margin-top:14px;font-size:.95rem}
 @media(max-width:620px){body{padding:14px}.defaults{grid-template-columns:1fr}}
 </style>
@@ -29,13 +28,13 @@ a{color:#9ff0a8}
 <h1>tinyblok installer</h1>
 <p>Flash tinyblok from a Chromium-based browser, then configure Wi-Fi and NATS from the device setup portal.</p>
 <div class="panel">
-<esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+<esp-web-install-button manifest="manifest.json">Flash now</esp-web-install-button>
 <ol>
-<li>Connect the ESP32-C6 over USB.</li>
+<li>Connect a ESP32-C6 board to your computer.</li>
 <li>Click install and choose the serial port.</li>
 <li>After flashing, join the <code>TINYBLOK</code> Wi-Fi network.</li>
-<li>Open the captive portal, or browse to <code>http://10.42.0.1</code>.</li>
-<li>Save Wi-Fi, device name, and NATS settings. No per-user secrets are baked into firmware.</li>
+<li>Browse to <a href="http://10.42.0.1">http://10.42.0.1</a></li>
+<li>Enter WiFi and NATS details, hit Save. The device will join your wifi.</li>
 </ol>
 </div>
 </main>
