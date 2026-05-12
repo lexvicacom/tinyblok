@@ -9,8 +9,11 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 - Connects to Wi-Fi, then NATS over TCP or TLS.
 - Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
 - Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
+- Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
 - You can configure Wi-Fi and NATS details with `make menuconfig`; ESP-IDF writes them to local `sdkconfig`.
 - Run `make build flash`, then `make monitor` to try it on hardware.
+
+![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
