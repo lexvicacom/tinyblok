@@ -10,12 +10,31 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 - Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
 - Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
 - Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
-- You can configure Wi-Fi and NATS details with `make menuconfig`; ESP-IDF writes them to local `sdkconfig`.
+- First boot starts a `tinyblok-setup` Wi-Fi setup portal. Runtime Wi-Fi and NATS settings are stored in NVS.
 - Run `make build flash`, then `make monitor` to try it on hardware.
 
 ![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
+
+## First-Time Setup
+
+1. Flash the firmware.
+2. Join the `tinyblok-setup` Wi-Fi network advertised by the device.
+3. Open `http://tinyblok.setup`. `http://192.168.4.1` is the fallback.
+4. Enter Wi-Fi and NATS settings.
+5. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
+6. On the LAN, the device appears at `http://tinyblok.local` by default, or `<device-name>.local` after renaming.
+
+If a display is attached during setup, it shows the setup AP and `tinyblok.setup` when there is enough room.
+
+## Changing Settings Later
+
+Open `http://tinyblok.local` or the configured device hostname on the LAN. The same API is available at `GET /api/status`, `GET /api/settings`, `POST /api/settings`, `POST /api/reboot`, and `POST /api/factory-reset`.
+
+## Factory Reset
+
+Use the setup page button or `POST /api/factory-reset`. This erases the `tinyblok` NVS namespace and restores the setup portal on reboot. There is no dedicated boot button hook yet because this board support does not currently define a user button GPIO.
 
 ## Patchbay Lite
 

@@ -1,15 +1,15 @@
-#include <string.h>
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "app_events.h"
 #include "display.h"
+#include "tinyblok_config.h"
+#include "tinyblok_web.h"
+#include "tinyblok_wifi.h"
 
 extern void zig_main(void);
 
@@ -19,9 +19,7 @@ extern void tinyblok_sources_init(void);
 
 static const char *TAG = "tinyblok";
 
-static EventGroupHandle_t wifi_events;
 static portMUX_TYPE tx_ring_mux = portMUX_INITIALIZER_UNLOCKED;
-#define WIFI_GOT_IP_BIT BIT0
 
 void tinyblok_tx_ring_lock(void)
 {
@@ -31,57 +29,6 @@ void tinyblok_tx_ring_lock(void)
 void tinyblok_tx_ring_unlock(void)
 {
     portEXIT_CRITICAL(&tx_ring_mux);
-}
-
-static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
-{
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
-    {
-        esp_wifi_connect();
-    }
-    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
-    {
-        ESP_LOGW(TAG, "wifi disconnected, reconnecting");
-        xEventGroupClearBits(wifi_events, WIFI_GOT_IP_BIT);
-        tinyblok_display_wifi_disconnected();
-        esp_wifi_connect();
-    }
-    else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "got ip: " IPSTR, IP2STR(&event->ip_info.ip));
-        tinyblok_display_wifi_connected(CONFIG_TINYBLOK_WIFI_SSID, &event->ip_info.ip);
-        xEventGroupSetBits(wifi_events, WIFI_GOT_IP_BIT);
-    }
-}
-
-static void wifi_connect_blocking(void)
-{
-    wifi_events = xEventGroupCreate();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    tinyblok_events_init();
-    tinyblok_display_start();
-
-    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
-
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
-
-    wifi_config_t wifi_cfg = {0};
-    strncpy((char *)wifi_cfg.sta.ssid, CONFIG_TINYBLOK_WIFI_SSID, sizeof(wifi_cfg.sta.ssid) - 1);
-    strncpy((char *)wifi_cfg.sta.password, CONFIG_TINYBLOK_WIFI_PASSWORD, sizeof(wifi_cfg.sta.password) - 1);
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "connecting to ssid '%s'", CONFIG_TINYBLOK_WIFI_SSID);
-    tinyblok_display_wifi_connecting(CONFIG_TINYBLOK_WIFI_SSID);
-    xEventGroupWaitBits(wifi_events, WIFI_GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 }
 
 void app_main(void)
@@ -98,7 +45,36 @@ void app_main(void)
         ESP_ERROR_CHECK(err);
     }
 
-    wifi_connect_blocking();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(tinyblok_config_init());
+    tinyblok_events_init();
+    tinyblok_display_start();
+
+    tinyblok_config_t cfg;
+    ESP_ERROR_CHECK(tinyblok_config_load(&cfg));
+    if (!cfg.configured || cfg.wifi_ssid[0] == '\0')
+    {
+        ESP_LOGI(TAG, "runtime config missing; starting setup portal");
+        tinyblok_display_setup_portal(CONFIG_TINYBLOK_SETUP_AP_SSID);
+        ESP_ERROR_CHECK(tinyblok_wifi_start_setup_ap());
+        ESP_ERROR_CHECK(tinyblok_web_start_setup_portal());
+        for (;;)
+            vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    esp_err_t wifi_err = tinyblok_wifi_connect_sta(cfg.wifi_ssid, cfg.wifi_password, 30000);
+    if (wifi_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "saved Wi-Fi failed (%s); starting setup portal", esp_err_to_name(wifi_err));
+        tinyblok_display_setup_portal(CONFIG_TINYBLOK_SETUP_AP_SSID);
+        ESP_ERROR_CHECK(tinyblok_wifi_start_setup_ap());
+        ESP_ERROR_CHECK(tinyblok_web_start_setup_portal());
+        for (;;)
+            vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    ESP_ERROR_CHECK(tinyblok_web_start_lan_server());
 
     if (tinyblok_nats_connect() != 0)
     {
