@@ -307,6 +307,3 @@ make nats-host-smoke
 make nats-host-smoke NATS_HOST_PORT=4224
 ```
 
-<img width="1784" height="1302" alt="ESP-IDF menuconfig tinyblok Wi-Fi and NATS settings" src="./docs/conf.png" />
-
-Checked-in defaults belong in [sdkconfig.defaults](./sdkconfig.defaults); local choices live in `sdkconfig`. Real secrets do not: use [secrets/nats.creds.example](./secrets/nats.creds.example) as the local `.creds` template.
