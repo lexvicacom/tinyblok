@@ -1,15 +1,17 @@
 #include "tinyblok_web.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "cJSON.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "mdns.h"
 #include "sdkconfig.h"
 #include "tinyblok_config.h"
@@ -37,200 +39,228 @@ static const char setup_html[] =
 "button{background:#1f7a3d;color:white;border-color:#1f7a3d;font-weight:700}.danger{background:#9b2d20;border-color:#9b2d20}"
 ".msg{min-height:1.5em;margin:12px 0;font-weight:650}.err{color:#ffb0a3}.ok{color:#9ff0a8}"
 "@media(max-width:620px){.row{grid-template-columns:1fr}body{padding:14px}}</style></head><body><main class=\"wrap\">"
-"<h1>tinyblok setup</h1><p>Join the tinyblok-setup Wi-Fi network, open http://tinyblok.setup, then save these settings. No phone app is required.</p><div id=\"msg\" class=\"msg\"></div>"
-"<form id=\"f\" class=\"grid\">"
+"<h1>tinyblok setup</h1><p>Enter the Wi-Fi and NATS details for this device, then save to connect.</p><div id=\"msg\" class=\"msg\"></div>"
+"<form id=\"f\" class=\"grid\" method=\"post\" action=\"/api/settings\" enctype=\"multipart/form-data\">"
 "<label>Wi-Fi SSID<input name=\"wifi_ssid\" maxlength=\"63\" required></label>"
 "<label>Wi-Fi password<input name=\"wifi_password\" type=\"password\" maxlength=\"127\" autocomplete=\"new-password\"></label>"
 "<label>Device name<input name=\"device_name\" maxlength=\"63\" required></label>"
 "<div class=\"row\"><label>NATS host<input name=\"nats_host\" maxlength=\"127\" required></label>"
 "<label>NATS port<input name=\"nats_port\" type=\"number\" min=\"1\" max=\"65535\" required></label></div>"
 "<div class=\"row\"><label>NATS auth<select name=\"nats_auth\"><option value=\"none\">None</option><option value=\"userpass\">Username + password</option><option value=\"token\">Token</option><option value=\"creds\">.creds file</option></select></label>"
-"<label class=\"check\"><input name=\"nats_tls\" type=\"checkbox\">Use TLS</label></div>"
+"<label class=\"check\"><input name=\"nats_tls\" value=\"1\" type=\"checkbox\">Use TLS</label></div>"
 "<div class=\"row\" id=\"userpassrow\"><label>NATS username<input name=\"nats_user\" maxlength=\"63\"></label>"
 "<label>NATS password<input name=\"nats_password\" type=\"password\" maxlength=\"127\" autocomplete=\"new-password\"></label></div>"
 "<label id=\"tokenrow\">NATS token<input name=\"nats_token\" type=\"password\" maxlength=\"255\" autocomplete=\"new-password\"></label>"
 "<label id=\"credsrow\">NATS .creds file<input name=\"nats_creds_file\" type=\"file\" accept=\".creds,text/plain\"></label>"
-"<label>NATS base topic<input name=\"nats_base_topic\" maxlength=\"127\"></label>"
-"<div class=\"row\"><label>Sample interval (ms)<input name=\"sample_interval_ms\" type=\"number\" min=\"100\" required></label>"
-"<label>Timezone<input name=\"timezone\" maxlength=\"63\"></label></div>"
-"<div class=\"row\"><label>Display brightness<input name=\"display_brightness\" type=\"number\" min=\"0\" max=\"255\" required></label>"
-"<label class=\"check\"><input name=\"display_enabled\" type=\"checkbox\">Display enabled</label></div>"
 "<div class=\"actions\"><button>Save and connect</button><button class=\"danger\" type=\"button\" id=\"reset\">Factory reset</button></div>"
 "</form></main><script>"
 "const $=s=>document.querySelector(s),msg=$('#msg'),form=$('#f');"
-"function authChanged(){let a=form.elements.nats_auth.value,creds=a==='creds';form.elements.nats_tls.checked=creds||form.elements.nats_tls.checked;form.elements.nats_tls.disabled=creds;$('#credsrow').style.display=creds?'grid':'none';$('#userpassrow').style.display=a==='userpass'?'grid':'none';$('#tokenrow').style.display=a==='token'?'grid':'none'}"
-"function readFile(file){return new Promise((ok,fail)=>{if(!file)return ok('');let r=new FileReader();r.onload=()=>ok(String(r.result));r.onerror=()=>fail(r.error);r.readAsText(file)})}"
 "function show(t,c){msg.textContent=t||'';msg.className='msg '+(c||'')}"
-"async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();"
-"for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}"
-"authChanged();if(st.last_error)show(st.last_error,'err')}"
+"function authChanged(){let a=form.elements.nats_auth.value,creds=a==='creds';form.elements.nats_tls.checked=creds||form.elements.nats_tls.checked;form.elements.nats_tls.disabled=creds;$('#credsrow').style.display=creds?'grid':'none';$('#userpassrow').style.display=a==='userpass'?'grid':'none';$('#tokenrow').style.display=a==='token'?'grid':'none'}"
+"async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();if(st.last_error)show(st.last_error,'err')}"
 "form.onchange=e=>{if(e.target.name==='nats_auth')authChanged()};"
-"form.onsubmit=async e=>{e.preventDefault();show('Saving...');let o={};for(const el of form.elements){if(!el.name||el.type==='file')continue;o[el.name]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value)}"
-"o.nats_tls=form.elements.nats_auth.value==='creds'||form.elements.nats_tls.checked;o.nats_creds=await readFile(form.elements.nats_creds_file.files[0]);"
-"let r=await fetch('/api/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o)});let j=await r.json();"
-"show(j.message||j.error,(r.ok&&j.ok)?'ok':'err')};"
+"form.onsubmit=async e=>{e.preventDefault();show('Saving...');let d=new FormData(form);if(form.elements.nats_auth.value==='creds')d.set('nats_tls','1');let r=await fetch('/api/settings',{method:'POST',body:d});let j=await r.json();show(j.message||j.error,(r.ok&&j.ok)?'ok':'err')};"
 "$('#reset').onclick=async()=>{if(confirm('Factory reset tinyblok settings?')){await fetch('/api/factory-reset',{method:'POST'});show('Rebooting...','ok')}};"
 "load().catch(e=>show(String(e),'err'));</script></body></html>";
 
-static esp_err_t send_json(httpd_req_t *req, cJSON *json, int status)
+static esp_err_t json_begin(httpd_req_t *req, int status)
 {
     char status_text[32];
     snprintf(status_text, sizeof(status_text), "%d", status);
     httpd_resp_set_status(req, status_text);
     httpd_resp_set_type(req, "application/json");
-    char *body = cJSON_PrintUnformatted(json);
-    if (!body)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json encode failed");
-    esp_err_t err = httpd_resp_sendstr(req, body);
-    cJSON_free(body);
-    return err;
+    return ESP_OK;
 }
 
-static esp_err_t send_error_json(httpd_req_t *req, int status, const char *message)
+static esp_err_t json_send_error(httpd_req_t *req, int status, const char *message)
 {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "ok", false);
-    cJSON_AddStringToObject(root, "error", message);
-    esp_err_t err = send_json(req, root, status);
-    cJSON_Delete(root);
-    return err;
+    char body[256];
+    json_begin(req, status);
+    snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", message ? message : "error");
+    return httpd_resp_sendstr(req, body);
 }
 
-static esp_err_t send_message_json(httpd_req_t *req, int status, bool ok, const char *key, const char *message)
+static esp_err_t json_send_message(httpd_req_t *req, int status, bool ok, const char *key, const char *message)
 {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "ok", ok);
-    cJSON_AddStringToObject(root, key, message);
-    esp_err_t err = send_json(req, root, status);
-    cJSON_Delete(root);
-    return err;
+    char body[256];
+    json_begin(req, status);
+    snprintf(body, sizeof(body), "{\"ok\":%s,\"%s\":\"%s\"}", ok ? "true" : "false", key, message ? message : "");
+    return httpd_resp_sendstr(req, body);
 }
 
 static esp_err_t send_status_json(httpd_req_t *req, const tinyblok_config_t *cfg)
 {
     char ip[16];
+    char body[384];
     tinyblok_wifi_get_ip_string(ip, sizeof(ip));
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "firmware_version", TINYBLOK_VERSION);
-    cJSON_AddBoolToObject(root, "wifi_connected", tinyblok_wifi_is_connected());
-    cJSON_AddStringToObject(root, "ip_address", ip);
-    cJSON_AddBoolToObject(root, "configured", cfg->configured);
-    cJSON_AddNumberToObject(root, "uptime_ms", (double)(esp_timer_get_time() / 1000));
-    cJSON_AddStringToObject(root, "last_error", last_error);
-    esp_err_t err = send_json(req, root, 200);
-    cJSON_Delete(root);
-    return err;
+    json_begin(req, 200);
+    snprintf(body, sizeof(body),
+             "{\"firmware_version\":\"%s\",\"wifi_connected\":%s,\"ip_address\":\"%s\","
+             "\"configured\":%s,\"uptime_ms\":%llu,\"last_error\":\"%s\"}",
+             TINYBLOK_VERSION,
+             tinyblok_wifi_is_connected() ? "true" : "false",
+             ip,
+             cfg->configured ? "true" : "false",
+             (unsigned long long)(esp_timer_get_time() / 1000),
+             last_error);
+    return httpd_resp_sendstr(req, body);
 }
 
 static esp_err_t send_settings_json(httpd_req_t *req, const tinyblok_config_t *cfg)
 {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "device_name", cfg->device_name);
-    cJSON_AddStringToObject(root, "wifi_ssid", cfg->wifi_ssid);
-    cJSON_AddStringToObject(root, "wifi_password", "");
-    cJSON_AddStringToObject(root, "nats_host", cfg->nats_host);
-    cJSON_AddNumberToObject(root, "nats_port", cfg->nats_port);
-    cJSON_AddStringToObject(root, "nats_user", cfg->nats_user);
-    cJSON_AddStringToObject(root, "nats_password", "");
-    cJSON_AddStringToObject(root, "nats_token", "");
-    cJSON_AddBoolToObject(root, "nats_password_present", cfg->nats_password[0] != '\0');
-    cJSON_AddBoolToObject(root, "nats_token_present", cfg->nats_token[0] != '\0');
-    cJSON_AddStringToObject(root, "nats_base_topic", cfg->nats_base_topic);
-    cJSON_AddStringToObject(root, "nats_auth", cfg->nats_auth);
-    cJSON_AddBoolToObject(root, "nats_tls", cfg->nats_tls);
-    cJSON_AddBoolToObject(root, "nats_creds_present", cfg->nats_creds[0] != '\0');
-    cJSON_AddBoolToObject(root, "display_enabled", cfg->display_enabled);
-    cJSON_AddNumberToObject(root, "display_brightness", cfg->display_brightness);
-    cJSON_AddNumberToObject(root, "sample_interval_ms", cfg->sample_interval_ms);
-    cJSON_AddStringToObject(root, "timezone", cfg->timezone);
-    cJSON_AddBoolToObject(root, "configured", cfg->configured);
-    esp_err_t err = send_json(req, root, 200);
-    cJSON_Delete(root);
-    return err;
+    char body[1024];
+    json_begin(req, 200);
+    snprintf(body, sizeof(body),
+             "{\"device_name\":\"%s\",\"wifi_ssid\":\"%s\",\"wifi_password\":\"\","
+             "\"nats_host\":\"%s\",\"nats_port\":%u,\"nats_user\":\"%s\","
+             "\"nats_password\":\"\",\"nats_token\":\"\","
+             "\"nats_password_present\":%s,\"nats_token_present\":%s,"
+             "\"nats_auth\":\"%s\",\"nats_tls\":%s,\"nats_creds_present\":%s,"
+             "\"configured\":%s}",
+             cfg->device_name,
+             cfg->wifi_ssid,
+             cfg->nats_host,
+             cfg->nats_port,
+             cfg->nats_user,
+             cfg->nats_password[0] ? "true" : "false",
+             cfg->nats_token[0] ? "true" : "false",
+             cfg->nats_auth,
+             cfg->nats_tls ? "true" : "false",
+             cfg->nats_creds[0] ? "true" : "false",
+             cfg->configured ? "true" : "false");
+    return httpd_resp_sendstr(req, body);
 }
 
-static esp_err_t copy_json_string(cJSON *root, const char *key, char *dst, size_t dst_len, bool keep_empty)
+static esp_err_t copy_form_string(char *dst, size_t dst_len, const char *src, bool keep_empty)
 {
-    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
-    if (!item)
+    if (!src)
         return ESP_OK;
-    if (!cJSON_IsString(item) || !item->valuestring)
-        return ESP_ERR_INVALID_ARG;
-    if (!keep_empty && item->valuestring[0] == '\0')
+    if (!keep_empty && src[0] == '\0')
         return ESP_OK;
-    size_t len = strnlen(item->valuestring, dst_len);
+    size_t len = strnlen(src, dst_len);
     if (len >= dst_len)
         return ESP_ERR_INVALID_SIZE;
-    memcpy(dst, item->valuestring, len);
+    memcpy(dst, src, len);
     dst[len] = '\0';
     return ESP_OK;
 }
 
-static esp_err_t apply_settings_json(cJSON *root, tinyblok_config_t *cfg)
+static esp_err_t apply_form_field(tinyblok_config_t *cfg, const char *name, const char *value)
 {
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "device_name", cfg->device_name, sizeof(cfg->device_name), true),
-                        TAG, "device_name");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "wifi_ssid", cfg->wifi_ssid, sizeof(cfg->wifi_ssid), true),
-                        TAG, "wifi_ssid");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "wifi_password", cfg->wifi_password, sizeof(cfg->wifi_password), false),
-                        TAG, "wifi_password");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_host", cfg->nats_host, sizeof(cfg->nats_host), true),
-                        TAG, "nats_host");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_user", cfg->nats_user, sizeof(cfg->nats_user), true),
-                        TAG, "nats_user");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_password", cfg->nats_password, sizeof(cfg->nats_password), false),
-                        TAG, "nats_password");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_token", cfg->nats_token, sizeof(cfg->nats_token), false),
-                        TAG, "nats_token");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_base_topic", cfg->nats_base_topic, sizeof(cfg->nats_base_topic), true),
-                        TAG, "nats_base_topic");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_auth", cfg->nats_auth, sizeof(cfg->nats_auth), true),
-                        TAG, "nats_auth");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "nats_creds", cfg->nats_creds, sizeof(cfg->nats_creds), false),
-                        TAG, "nats_creds");
-    ESP_RETURN_ON_ERROR(copy_json_string(root, "timezone", cfg->timezone, sizeof(cfg->timezone), true),
-                        TAG, "timezone");
+    if (strcmp(name, "device_name") == 0)
+        return copy_form_string(cfg->device_name, sizeof(cfg->device_name), value, true);
+    if (strcmp(name, "wifi_ssid") == 0)
+        return copy_form_string(cfg->wifi_ssid, sizeof(cfg->wifi_ssid), value, true);
+    if (strcmp(name, "wifi_password") == 0)
+        return copy_form_string(cfg->wifi_password, sizeof(cfg->wifi_password), value, false);
+    if (strcmp(name, "nats_host") == 0)
+        return copy_form_string(cfg->nats_host, sizeof(cfg->nats_host), value, true);
+    if (strcmp(name, "nats_user") == 0)
+        return copy_form_string(cfg->nats_user, sizeof(cfg->nats_user), value, true);
+    if (strcmp(name, "nats_password") == 0)
+        return copy_form_string(cfg->nats_password, sizeof(cfg->nats_password), value, false);
+    if (strcmp(name, "nats_token") == 0)
+        return copy_form_string(cfg->nats_token, sizeof(cfg->nats_token), value, false);
+    if (strcmp(name, "nats_auth") == 0)
+        return copy_form_string(cfg->nats_auth, sizeof(cfg->nats_auth), value, true);
+    if (strcmp(name, "nats_creds_file") == 0)
+        return copy_form_string(cfg->nats_creds, sizeof(cfg->nats_creds), value, false);
+    if (strcmp(name, "nats_tls") == 0)
+    {
+        cfg->nats_tls = value && value[0] != '\0' && strcmp(value, "0") != 0;
+        return ESP_OK;
+    }
+    if (strcmp(name, "nats_port") == 0)
+    {
+        char *end = NULL;
+        unsigned long port = strtoul(value, &end, 10);
+        if (!value[0] || (end && *end) || port == 0 || port > 65535)
+            return ESP_ERR_INVALID_ARG;
+        cfg->nats_port = (uint16_t)port;
+        return ESP_OK;
+    }
+    return ESP_OK;
+}
 
-    cJSON *port = cJSON_GetObjectItemCaseSensitive(root, "nats_port");
-    if (port)
+static char *find_header_param(char *headers, const char *headers_end, const char *param)
+{
+    char needle[32];
+    snprintf(needle, sizeof(needle), "%s=\"", param);
+    for (char *p = strstr(headers, needle); p && p < headers_end; p = strstr(p + 1, needle))
+        return p + strlen(needle);
+    return NULL;
+}
+
+static esp_err_t apply_multipart_form(char *body, const char *boundary, tinyblok_config_t *cfg)
+{
+    char marker[96];
+    snprintf(marker, sizeof(marker), "--%s", boundary);
+    const size_t marker_len = strlen(marker);
+    char *part = strstr(body, marker);
+    if (!part)
+        return ESP_ERR_INVALID_ARG;
+
+    cfg->nats_tls = false;
+    while (part)
     {
-        if (!cJSON_IsNumber(port) || port->valuedouble < 1 || port->valuedouble > 65535)
+        part += marker_len;
+        if (strncmp(part, "--", 2) == 0)
+            break;
+        if (strncmp(part, "\r\n", 2) == 0)
+            part += 2;
+
+        char *headers_end = strstr(part, "\r\n\r\n");
+        if (!headers_end)
             return ESP_ERR_INVALID_ARG;
-        cfg->nats_port = (uint16_t)port->valueint;
-    }
-    cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "display_enabled");
-    if (enabled)
-    {
-        if (!cJSON_IsBool(enabled))
+        char *name_start = find_header_param(part, headers_end, "name");
+        if (!name_start)
             return ESP_ERR_INVALID_ARG;
-        cfg->display_enabled = cJSON_IsTrue(enabled);
-    }
-    cJSON *tls = cJSON_GetObjectItemCaseSensitive(root, "nats_tls");
-    if (tls)
-    {
-        if (!cJSON_IsBool(tls))
+        char *name_end = strchr(name_start, '"');
+        if (!name_end || name_end > headers_end)
             return ESP_ERR_INVALID_ARG;
-        cfg->nats_tls = cJSON_IsTrue(tls);
+        *name_end = '\0';
+
+        char *value = headers_end + 4;
+        char *next = strstr(value, marker);
+        if (!next)
+            return ESP_ERR_INVALID_ARG;
+        char *value_end = next;
+        if (value_end >= value + 2 && value_end[-2] == '\r' && value_end[-1] == '\n')
+            value_end -= 2;
+        *value_end = '\0';
+
+        ESP_RETURN_ON_ERROR(apply_form_field(cfg, name_start, value), TAG, "apply form field");
+        part = next;
     }
+
     if (strcmp(cfg->nats_auth, "creds") == 0)
         cfg->nats_tls = true;
-    cJSON *brightness = cJSON_GetObjectItemCaseSensitive(root, "display_brightness");
-    if (brightness)
-    {
-        if (!cJSON_IsNumber(brightness) || brightness->valuedouble < 0 || brightness->valuedouble > 255)
-            return ESP_ERR_INVALID_ARG;
-        cfg->display_brightness = (uint8_t)brightness->valueint;
-    }
-    cJSON *sample = cJSON_GetObjectItemCaseSensitive(root, "sample_interval_ms");
-    if (sample)
-    {
-        if (!cJSON_IsNumber(sample) || sample->valuedouble < 100 || sample->valuedouble > UINT32_MAX)
-            return ESP_ERR_INVALID_ARG;
-        cfg->sample_interval_ms = (uint32_t)sample->valuedouble;
-    }
     if (cfg->wifi_ssid[0] == '\0' || cfg->device_name[0] == '\0' || cfg->nats_host[0] == '\0')
         return ESP_ERR_INVALID_ARG;
     return ESP_OK;
+}
+
+static esp_err_t apply_settings_form(httpd_req_t *req, char *body, tinyblok_config_t *cfg)
+{
+    char content_type[128];
+    size_t content_type_len = httpd_req_get_hdr_value_len(req, "Content-Type");
+    if (content_type_len == 0 || content_type_len >= sizeof(content_type))
+        return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)),
+                        TAG, "get content-type");
+
+    char *boundary = strstr(content_type, "boundary=");
+    if (!boundary)
+        return ESP_ERR_INVALID_ARG;
+    boundary += strlen("boundary=");
+    if (*boundary == '"')
+    {
+        boundary++;
+        char *end = strchr(boundary, '"');
+        if (end)
+            *end = '\0';
+    }
+    return apply_multipart_form(body, boundary, cfg);
 }
 
 static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap)
@@ -251,77 +281,114 @@ static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap)
 
 static esp_err_t root_get(httpd_req_t *req)
 {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, setup_html, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t captive_get(httpd_req_t *req)
+{
+    /*
+     * Captive-network assistants are short-lived and dislike redirect loops.
+     * Serve the same local setup page directly for every probe/unknown URL.
+     */
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, setup_html, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t status_get(httpd_req_t *req)
 {
-    tinyblok_config_t cfg;
-    esp_err_t err = tinyblok_config_load(&cfg);
+    tinyblok_config_t *cfg = calloc(1, sizeof(*cfg));
+    if (!cfg)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    esp_err_t err = tinyblok_config_load(cfg);
     if (err != ESP_OK)
+    {
+        free(cfg);
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    return send_status_json(req, &cfg);
+    }
+    err = send_status_json(req, cfg);
+    free(cfg);
+    return err;
 }
 
 static esp_err_t settings_get(httpd_req_t *req)
 {
-    tinyblok_config_t cfg;
-    esp_err_t err = tinyblok_config_load(&cfg);
+    tinyblok_config_t *cfg = calloc(1, sizeof(*cfg));
+    if (!cfg)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    esp_err_t err = tinyblok_config_load(cfg);
     if (err != ESP_OK)
+    {
+        free(cfg);
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    return send_settings_json(req, &cfg);
+    }
+    err = send_settings_json(req, cfg);
+    free(cfg);
+    return err;
 }
 
 static esp_err_t settings_post(httpd_req_t *req)
 {
-    char body[6144];
-    esp_err_t err = read_request_body(req, body, sizeof(body));
+    char *body = malloc(8192);
+    if (!body)
+        return json_send_error(req, 500, "no memory");
+    esp_err_t err = read_request_body(req, body, 8192);
     if (err != ESP_OK)
-        return send_error_json(req, 400, "invalid request body");
+    {
+        free(body);
+        return json_send_error(req, 400, "invalid request body");
+    }
 
-    cJSON *json = cJSON_Parse(body);
-    if (!json)
-        return send_error_json(req, 400, "invalid json");
-
-    tinyblok_config_t cfg;
-    err = tinyblok_config_load(&cfg);
+    tinyblok_config_t *cfg = calloc(1, sizeof(*cfg));
+    if (!cfg)
+    {
+        free(body);
+        return json_send_error(req, 500, "no memory");
+    }
+    err = tinyblok_config_load(cfg);
     if (err == ESP_OK)
-        err = apply_settings_json(json, &cfg);
-    cJSON_Delete(json);
+        err = apply_settings_form(req, body, cfg);
+    free(body);
     if (err != ESP_OK)
     {
         snprintf(last_error, sizeof(last_error), "Invalid settings: %s", esp_err_to_name(err));
-        return send_error_json(req, 400, last_error);
+        free(cfg);
+        return json_send_error(req, 400, last_error);
     }
 
     if (setup_mode)
     {
-        cfg.configured = false;
-        err = tinyblok_config_save(&cfg);
+        cfg->configured = false;
+        err = tinyblok_config_save(cfg);
         if (err == ESP_OK)
-            err = tinyblok_wifi_connect_sta(cfg.wifi_ssid, cfg.wifi_password, 15000);
+            err = tinyblok_wifi_connect_sta(cfg->wifi_ssid, cfg->wifi_password, 15000);
         if (err != ESP_OK)
         {
             snprintf(last_error, sizeof(last_error), "Wi-Fi connection failed: %s", esp_err_to_name(err));
             ESP_LOGW(TAG, "%s", last_error);
-            return send_message_json(req, 409, false, "error", last_error);
+            free(cfg);
+            return json_send_message(req, 409, false, "error", last_error);
         }
-        cfg.configured = true;
-        ESP_RETURN_ON_ERROR(tinyblok_config_save(&cfg), TAG, "mark configured");
+        cfg->configured = true;
+        err = tinyblok_config_save(cfg);
+        free(cfg);
+        ESP_RETURN_ON_ERROR(err, TAG, "mark configured");
         last_error[0] = '\0';
-        err = send_message_json(req, 200, true, "message", "Connected. Rebooting into normal mode.");
+        err = json_send_message(req, 200, true, "message", "Connected. Rebooting into normal mode.");
         vTaskDelay(pdMS_TO_TICKS(250));
         esp_restart();
         return err;
     }
 
-    cfg.configured = true;
-    err = tinyblok_config_save(&cfg);
+    cfg->configured = true;
+    err = tinyblok_config_save(cfg);
+    free(cfg);
     if (err != ESP_OK)
-        return send_error_json(req, 500, esp_err_to_name(err));
+        return json_send_error(req, 500, esp_err_to_name(err));
     last_error[0] = '\0';
-    return send_message_json(req, 200, true, "message", "Settings saved.");
+    return json_send_message(req, 200, true, "message", "Settings saved.");
 }
 
 static void reboot_task(void *arg)
@@ -333,7 +400,7 @@ static void reboot_task(void *arg)
 
 static esp_err_t reboot_post(httpd_req_t *req)
 {
-    httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"Rebooting\"}");
+    json_send_message(req, 200, true, "message", "Rebooting");
     xTaskCreate(reboot_task, "tinyblok_reboot", 2048, NULL, 1, NULL);
     return ESP_OK;
 }
@@ -344,7 +411,7 @@ static esp_err_t factory_reset_post(httpd_req_t *req)
     (void)esp_wifi_restore();
     if (err != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"Factory reset complete. Rebooting\"}");
+    json_send_message(req, 200, true, "message", "Factory reset complete. Rebooting");
     xTaskCreate(reboot_task, "tinyblok_reset", 2048, NULL, 1, NULL);
     return ESP_OK;
 }
@@ -357,12 +424,25 @@ static esp_err_t register_handlers(void)
     const httpd_uri_t settings_post_uri = {.uri = "/api/settings", .method = HTTP_POST, .handler = settings_post};
     const httpd_uri_t reboot = {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post};
     const httpd_uri_t reset = {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = factory_reset_post};
+    const httpd_uri_t captive_any = {.uri = "/*", .method = HTTP_GET, .handler = captive_get};
+    const httpd_uri_t probes[] = {
+        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_get},
+        {.uri = "/fwlink", .method = HTTP_GET, .handler = captive_get},
+    };
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), TAG, "register /");
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++)
+        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &probes[i]), TAG, "register captive probe");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &status), TAG, "register status");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_get_uri), TAG, "register settings get");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_post_uri), TAG, "register settings post");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &reboot), TAG, "register reboot");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &reset), TAG, "register reset");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &captive_any), TAG, "register captive wildcard");
     return ESP_OK;
 }
 
@@ -374,6 +454,8 @@ static esp_err_t start_server(bool setup)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.stack_size = 6144;
+    cfg.max_uri_handlers = 16;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
     ESP_RETURN_ON_ERROR(httpd_start(&server, &cfg), TAG, "start http server");
     ESP_RETURN_ON_ERROR(register_handlers(), TAG, "register handlers");
     ESP_LOGI(TAG, "%s web server started", setup ? "setup" : "LAN");
@@ -401,15 +483,35 @@ static void make_hostname(const char *device_name, char *out, size_t out_len)
 
 static esp_err_t start_mdns(void)
 {
-    tinyblok_config_t cfg;
-    ESP_RETURN_ON_ERROR(tinyblok_config_load(&cfg), TAG, "load config for mdns");
+    tinyblok_config_t *cfg = calloc(1, sizeof(*cfg));
+    ESP_RETURN_ON_FALSE(cfg, ESP_ERR_NO_MEM, TAG, "allocate config for mdns");
+    esp_err_t err = tinyblok_config_load(cfg);
+    if (err != ESP_OK)
+    {
+        free(cfg);
+        ESP_RETURN_ON_ERROR(err, TAG, "load config for mdns");
+    }
     char hostname[64];
-    make_hostname(cfg.device_name, hostname, sizeof(hostname));
-    esp_err_t err = mdns_init();
+    make_hostname(cfg->device_name, hostname, sizeof(hostname));
+    err = mdns_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+        free(cfg);
         return err;
-    ESP_RETURN_ON_ERROR(mdns_hostname_set(hostname), TAG, "set mdns hostname");
-    ESP_RETURN_ON_ERROR(mdns_instance_name_set(cfg.device_name[0] ? cfg.device_name : "tinyblok"), TAG, "set mdns instance");
+    }
+    err = mdns_hostname_set(hostname);
+    if (err != ESP_OK)
+    {
+        free(cfg);
+        ESP_RETURN_ON_ERROR(err, TAG, "set mdns hostname");
+    }
+    err = mdns_instance_name_set(cfg->device_name[0] ? cfg->device_name : "tinyblok");
+    if (err != ESP_OK)
+    {
+        free(cfg);
+        ESP_RETURN_ON_ERROR(err, TAG, "set mdns instance");
+    }
+    free(cfg);
     mdns_service_add("tinyblok", "_http", "_tcp", 80, NULL, 0);
     ESP_LOGI(TAG, "mDNS started: http://%s.local", hostname);
     return ESP_OK;

@@ -33,7 +33,7 @@ endif
 
 PORT_ARG := $(if $(strip $(PORT)),-p $(PORT),)
 
-.PHONY: check-idf gen soundcheck build test nats-host-smoke flash monitor flash-monitor clean fullclean menuconfig sync-kernel sync-kernel-remote
+.PHONY: check-idf gen soundcheck build test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig sync-kernel sync-kernel-remote
 
 check-idf:
 	@if [ -n "$(IDF_EXPORT)" ]; then \
@@ -150,6 +150,10 @@ monitor: check-idf
 flash-monitor: build
 	@echo "(exit with Ctrl+])"
 	@$(IDF) $(PORT_ARG) flash monitor
+
+erase-flash-monitor: build
+	@echo "(exit with Ctrl+])"
+	@$(IDF) $(PORT_ARG) erase-flash flash monitor
 
 clean: check-idf
 	@$(IDF) clean

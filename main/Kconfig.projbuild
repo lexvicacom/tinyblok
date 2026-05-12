@@ -14,12 +14,6 @@ menu "tinyblok"
             Build-time default copied into runtime config before the user
             saves settings in the setup portal. Leave empty for an open AP.
 
-    config TINYBLOK_SETUP_AP_SSID
-        string "Setup portal SoftAP SSID"
-        default "tinyblok-setup"
-        help
-            SSID used when the device has no saved runtime Wi-Fi settings.
-
     config TINYBLOK_SETUP_AP_PASSWORD
         string "Setup portal SoftAP password"
         default ""
@@ -90,6 +84,16 @@ menu "tinyblok"
         int "Display brightness default"
         default 255
         range 0 255
+
+    config TINYBLOK_DISPLAY_I2C_SDA_GPIO
+        int "Display I2C SDA GPIO"
+        default 14
+        range 0 30
+
+    config TINYBLOK_DISPLAY_I2C_SCL_GPIO
+        int "Display I2C SCL GPIO"
+        default 15
+        range 0 30
 
     config TINYBLOK_SAMPLE_INTERVAL_MS
         int "Default sample interval (ms)"
