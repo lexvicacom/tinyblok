@@ -81,6 +81,7 @@ static int tls_inited = 0;
 #define NET_OPEN() (sock >= 0)
 #define NATS_SUBJECT_MAX 128
 #define NATS_MSG_PAYLOAD_MAX 64
+#define NATS_IO_TIMEOUT_MS 3000
 
 static char rx_buf[768];
 static size_t rx_len = 0;
@@ -248,6 +249,18 @@ static void net_close(void)
         close(sock);
         sock = -1;
     }
+}
+
+static void set_socket_timeouts(int fd)
+{
+    struct timeval tv = {
+        .tv_sec = NATS_IO_TIMEOUT_MS / 1000,
+        .tv_usec = (NATS_IO_TIMEOUT_MS % 1000) * 1000,
+    };
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0)
+        ESP_LOGW(TAG, "setsockopt(SO_RCVTIMEO) failed: errno=%d", errno);
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0)
+        ESP_LOGW(TAG, "setsockopt(SO_SNDTIMEO) failed: errno=%d", errno);
 }
 
 static void close_sock(int log_disconnect)
@@ -564,6 +577,7 @@ static int try_connect_once(int verbose_failure)
         freeaddrinfo(res);
         return -1;
     }
+    set_socket_timeouts(fd);
 
     if (connect(fd, res->ai_addr, res->ai_addrlen) != 0)
     {

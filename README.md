@@ -10,7 +10,7 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 - Supports no auth, user/pass, or NATS `.creds` auth - **works with Synadia Cloud** and other operator mode clusters
 - Publishes heap, RSSI, uptime, and temperature-derived subjects from [patchbay.edn](./patchbay.edn).
 - Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
-- First boot starts a `tinyblok-setup` Wi-Fi setup portal. Runtime Wi-Fi and NATS settings are stored in NVS.
+- First boot starts a `TINYBLOK` Wi-Fi setup portal. Runtime Wi-Fi and NATS settings are stored in NVS.
 - Run `make build flash`, then `make monitor` to try it on hardware.
 
 ![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
@@ -20,21 +20,53 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 ## First-Time Setup
 
 1. Flash the firmware.
-2. Join the `tinyblok-setup` Wi-Fi network advertised by the device.
-3. Open `http://tinyblok.setup`. `http://192.168.4.1` is the fallback.
-4. Enter Wi-Fi and NATS settings.
+2. Join the `TINYBLOK` Wi-Fi network advertised by the device.
+3. The captive portal should open automatically. If it does not, open `http://10.42.0.1`.
+4. Enter Wi-Fi, device name, and NATS settings.
 5. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
-6. On the LAN, the device appears at `http://tinyblok.local` by default, or `<device-name>.local` after renaming.
+6. On the LAN, the device appears at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
 
-If a display is attached during setup, it shows the setup AP and `tinyblok.setup` when there is enough room.
+The device name is used as the mDNS hostname after setup. Use simple letters,
+numbers, spaces, underscores, or hyphens; firmware normalizes it to a
+lowercase `.local` hostname with hyphens.
+
+If a display is attached during setup, it shows the setup AP and `http://10.42.0.1` when there is enough room.
+Display I2C defaults are SDA GPIO14 and SCL GPIO15; change them in menuconfig if your board is wired differently.
 
 ## Changing Settings Later
 
-Open `http://tinyblok.local` or the configured device hostname on the LAN. The same API is available at `GET /api/status`, `GET /api/settings`, `POST /api/settings`, `POST /api/reboot`, and `POST /api/factory-reset`.
+Open `http://<device-name>.local` on the same LAN, for example
+`http://tinyblok.local` or `http://kitchen.local`. Use that page to change
+Wi-Fi, device name, and NATS settings. The page saves settings to NVS; reboot
+from the page if a change needs a clean reconnect.
+
+The same API is available on the LAN:
+
+- `GET /api/status`
+- `GET /api/settings`
+- `POST /api/settings`
+- `POST /api/reboot`
+- `POST /api/factory-reset`
+
+For example:
+
+```sh
+curl http://tinyblok.local/api/status
+curl -X POST http://tinyblok.local/api/reboot
+```
 
 ## Factory Reset
 
-Use the setup page button or `POST /api/factory-reset`. This erases the `tinyblok` NVS namespace and restores the setup portal on reboot. There is no dedicated boot button hook yet because this board support does not currently define a user button GPIO.
+Use the setup/settings page button or `POST /api/factory-reset`. This erases
+the `tinyblok` NVS namespace and restores the setup portal on reboot. There is
+no dedicated boot button hook yet because this board support does not currently
+define a user button GPIO.
+
+For a full serial reset while developing:
+
+```sh
+make erase-flash-monitor
+```
 
 ## Patchbay Lite
 

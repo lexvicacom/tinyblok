@@ -6,7 +6,7 @@ idf_component_register(
          "c/tinyblok_config.c" "c/tinyblok_wifi.c" "c/tinyblok_web.c"
     INCLUDE_DIRS "c"
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_driver_i2c esp_driver_gpio esp_wifi esp_event esp_netif nvs_flash lwip
-                  esp_http_server cjson mdns
+                  esp_http_server mdns
 )
 
 file(READ ${CMAKE_SOURCE_DIR}/build.zig.zon TINYBLOK_ZON)

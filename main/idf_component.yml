@@ -1,3 +1,2 @@
 dependencies:
-  espressif/cjson: "^1.7.19"
   espressif/mdns: "^1.11.1"

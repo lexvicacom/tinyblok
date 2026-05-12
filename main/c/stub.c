@@ -3,6 +3,7 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "nvs_flash.h"
+#include <stdlib.h>
 #include "sdkconfig.h"
 
 #include "app_events.h"
@@ -51,37 +52,42 @@ void app_main(void)
     tinyblok_events_init();
     tinyblok_display_start();
 
-    tinyblok_config_t cfg;
-    ESP_ERROR_CHECK(tinyblok_config_load(&cfg));
-    if (!cfg.configured || cfg.wifi_ssid[0] == '\0')
+    tinyblok_config_t *cfg = calloc(1, sizeof(*cfg));
+    ESP_ERROR_CHECK(cfg ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(tinyblok_config_load(cfg));
+    if (!cfg->configured || cfg->wifi_ssid[0] == '\0')
     {
+        free(cfg);
         ESP_LOGI(TAG, "runtime config missing; starting setup portal");
-        tinyblok_display_setup_portal(CONFIG_TINYBLOK_SETUP_AP_SSID);
+        tinyblok_display_setup_portal("TINYBLOK");
         ESP_ERROR_CHECK(tinyblok_wifi_start_setup_ap());
         ESP_ERROR_CHECK(tinyblok_web_start_setup_portal());
         for (;;)
             vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    esp_err_t wifi_err = tinyblok_wifi_connect_sta(cfg.wifi_ssid, cfg.wifi_password, 30000);
+    esp_err_t wifi_err = tinyblok_wifi_connect_sta(cfg->wifi_ssid, cfg->wifi_password, 30000);
+    free(cfg);
     if (wifi_err != ESP_OK)
     {
         ESP_LOGW(TAG, "saved Wi-Fi failed (%s); starting setup portal", esp_err_to_name(wifi_err));
-        tinyblok_display_setup_portal(CONFIG_TINYBLOK_SETUP_AP_SSID);
+        tinyblok_display_setup_portal("TINYBLOK");
         ESP_ERROR_CHECK(tinyblok_wifi_start_setup_ap());
         ESP_ERROR_CHECK(tinyblok_web_start_setup_portal());
         for (;;)
             vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    ESP_ERROR_CHECK(tinyblok_wifi_stop_setup_ap());
 
     ESP_ERROR_CHECK(tinyblok_web_start_lan_server());
+
+    tinyblok_sources_init();
+    tinyblok_drivers_start();
 
     if (tinyblok_nats_connect() != 0)
     {
         ESP_LOGE(TAG, "nats connect failed; continuing without broker");
     }
 
-    tinyblok_sources_init();
-    tinyblok_drivers_start();
     zig_main();
 }
