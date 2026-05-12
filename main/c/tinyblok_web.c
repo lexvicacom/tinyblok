@@ -50,6 +50,30 @@ static esp_err_t json_send_message(httpd_req_t *req, int status, bool ok, const 
     return httpd_resp_sendstr(req, body);
 }
 
+static esp_err_t json_send_escaped_chunk(httpd_req_t *req, const char *s)
+{
+    char esc[8];
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+    {
+        if (*p == '"' || *p == '\\')
+        {
+            esc[0] = '\\';
+            esc[1] = (char)*p;
+            ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, esc, 2), TAG, "send json escape");
+        }
+        else if (*p >= 0x20 && *p < 0x7f)
+        {
+            ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, (const char *)p, 1), TAG, "send json char");
+        }
+        else
+        {
+            snprintf(esc, sizeof(esc), "\\u%04x", (unsigned)*p);
+            ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, esc, 6), TAG, "send json unicode escape");
+        }
+    }
+    return ESP_OK;
+}
+
 static esp_err_t send_setup_html(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -69,88 +93,100 @@ static esp_err_t send_status_json(httpd_req_t *req, const tinyblok_config_t *cfg
     char ip[16];
     char body[384];
     tinyblok_wifi_get_ip_string(ip, sizeof(ip));
+    int n = snprintf(body, sizeof(body),
+                     "{\"firmware_version\":\"%s\",\"wifi_connected\":%s,\"ip_address\":\"%s\","
+                     "\"configured\":%s,\"uptime_ms\":%llu,\"last_error\":\"%s\"}",
+                     TINYBLOK_VERSION,
+                     tinyblok_wifi_is_connected() ? "true" : "false",
+                     ip,
+                     cfg->configured ? "true" : "false",
+                     (unsigned long long)(esp_timer_get_time() / 1000),
+                     last_error);
+    if (n < 0 || (size_t)n >= sizeof(body))
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status overflow");
     json_begin(req, 200);
-    snprintf(body, sizeof(body),
-             "{\"firmware_version\":\"%s\",\"wifi_connected\":%s,\"ip_address\":\"%s\","
-             "\"configured\":%s,\"uptime_ms\":%llu,\"last_error\":\"%s\"}",
-             TINYBLOK_VERSION,
-             tinyblok_wifi_is_connected() ? "true" : "false",
-             ip,
-             cfg->configured ? "true" : "false",
-             (unsigned long long)(esp_timer_get_time() / 1000),
-             last_error);
     return httpd_resp_sendstr(req, body);
 }
 
 static esp_err_t send_settings_json(httpd_req_t *req, const tinyblok_config_t *cfg)
 {
     char body[1024];
+    int n = snprintf(body, sizeof(body),
+                     "{\"device_name\":\"%s\",\"wifi_ssid\":\"%s\",\"wifi_password\":\"\","
+                     "\"nats_host\":\"%s\",\"nats_port\":%u,\"nats_user\":\"%s\","
+                     "\"nats_password\":\"\",\"nats_token\":\"\","
+                     "\"nats_password_present\":%s,\"nats_token_present\":%s,"
+                     "\"nats_auth\":\"%s\",\"nats_tls\":%s,\"nats_creds_present\":%s,"
+                     "\"configured\":%s}",
+                     cfg->device_name,
+                     cfg->wifi_ssid,
+                     cfg->nats_host,
+                     cfg->nats_port,
+                     cfg->nats_user,
+                     cfg->nats_password[0] ? "true" : "false",
+                     cfg->nats_token[0] ? "true" : "false",
+                     cfg->nats_auth,
+                     cfg->nats_tls ? "true" : "false",
+                     cfg->nats_creds[0] ? "true" : "false",
+                     cfg->configured ? "true" : "false");
+    if (n < 0 || (size_t)n >= sizeof(body))
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "settings overflow");
     json_begin(req, 200);
-    snprintf(body, sizeof(body),
-             "{\"device_name\":\"%s\",\"wifi_ssid\":\"%s\",\"wifi_password\":\"\","
-             "\"nats_host\":\"%s\",\"nats_port\":%u,\"nats_user\":\"%s\","
-             "\"nats_password\":\"\",\"nats_token\":\"\","
-             "\"nats_password_present\":%s,\"nats_token_present\":%s,"
-             "\"nats_auth\":\"%s\",\"nats_tls\":%s,\"nats_creds_present\":%s,"
-             "\"configured\":%s}",
-             cfg->device_name,
-             cfg->wifi_ssid,
-             cfg->nats_host,
-             cfg->nats_port,
-             cfg->nats_user,
-             cfg->nats_password[0] ? "true" : "false",
-             cfg->nats_token[0] ? "true" : "false",
-             cfg->nats_auth,
-             cfg->nats_tls ? "true" : "false",
-             cfg->nats_creds[0] ? "true" : "false",
-             cfg->configured ? "true" : "false");
     return httpd_resp_sendstr(req, body);
 }
 
-static esp_err_t copy_form_string(char *dst, size_t dst_len, const char *src, bool keep_empty)
+static esp_err_t copy_form_value(char *dst, size_t dst_len, const char *src, size_t src_len, bool keep_empty)
 {
-    if (!src)
+    if (!keep_empty && src_len == 0)
         return ESP_OK;
-    if (!keep_empty && src[0] == '\0')
-        return ESP_OK;
-    size_t len = strnlen(src, dst_len);
-    if (len >= dst_len)
+    if (src_len >= dst_len)
         return ESP_ERR_INVALID_SIZE;
-    memcpy(dst, src, len);
-    dst[len] = '\0';
+    memcpy(dst, src, src_len);
+    dst[src_len] = '\0';
     return ESP_OK;
 }
 
-static esp_err_t apply_form_field(tinyblok_config_t *cfg, const char *name, const char *value)
+static bool name_is(const char *name, size_t name_len, const char *lit)
 {
-    if (strcmp(name, "device_name") == 0)
-        return copy_form_string(cfg->device_name, sizeof(cfg->device_name), value, true);
-    if (strcmp(name, "wifi_ssid") == 0)
-        return copy_form_string(cfg->wifi_ssid, sizeof(cfg->wifi_ssid), value, true);
-    if (strcmp(name, "wifi_password") == 0)
-        return copy_form_string(cfg->wifi_password, sizeof(cfg->wifi_password), value, false);
-    if (strcmp(name, "nats_host") == 0)
-        return copy_form_string(cfg->nats_host, sizeof(cfg->nats_host), value, true);
-    if (strcmp(name, "nats_user") == 0)
-        return copy_form_string(cfg->nats_user, sizeof(cfg->nats_user), value, true);
-    if (strcmp(name, "nats_password") == 0)
-        return copy_form_string(cfg->nats_password, sizeof(cfg->nats_password), value, false);
-    if (strcmp(name, "nats_token") == 0)
-        return copy_form_string(cfg->nats_token, sizeof(cfg->nats_token), value, false);
-    if (strcmp(name, "nats_auth") == 0)
-        return copy_form_string(cfg->nats_auth, sizeof(cfg->nats_auth), value, true);
-    if (strcmp(name, "nats_creds_file") == 0)
-        return copy_form_string(cfg->nats_creds, sizeof(cfg->nats_creds), value, false);
-    if (strcmp(name, "nats_tls") == 0)
+    return strlen(lit) == name_len && memcmp(name, lit, name_len) == 0;
+}
+
+static esp_err_t apply_form_field(tinyblok_config_t *cfg, const char *name, size_t name_len,
+                                  const char *value, size_t value_len)
+{
+    if (name_is(name, name_len, "device_name"))
+        return copy_form_value(cfg->device_name, sizeof(cfg->device_name), value, value_len, true);
+    if (name_is(name, name_len, "wifi_ssid"))
+        return copy_form_value(cfg->wifi_ssid, sizeof(cfg->wifi_ssid), value, value_len, true);
+    if (name_is(name, name_len, "wifi_password"))
+        return copy_form_value(cfg->wifi_password, sizeof(cfg->wifi_password), value, value_len, false);
+    if (name_is(name, name_len, "nats_host"))
+        return copy_form_value(cfg->nats_host, sizeof(cfg->nats_host), value, value_len, true);
+    if (name_is(name, name_len, "nats_user"))
+        return copy_form_value(cfg->nats_user, sizeof(cfg->nats_user), value, value_len, true);
+    if (name_is(name, name_len, "nats_password"))
+        return copy_form_value(cfg->nats_password, sizeof(cfg->nats_password), value, value_len, false);
+    if (name_is(name, name_len, "nats_token"))
+        return copy_form_value(cfg->nats_token, sizeof(cfg->nats_token), value, value_len, false);
+    if (name_is(name, name_len, "nats_auth"))
+        return copy_form_value(cfg->nats_auth, sizeof(cfg->nats_auth), value, value_len, true);
+    if (name_is(name, name_len, "nats_creds_file"))
+        return copy_form_value(cfg->nats_creds, sizeof(cfg->nats_creds), value, value_len, false);
+    if (name_is(name, name_len, "nats_tls"))
     {
-        cfg->nats_tls = value && value[0] != '\0' && strcmp(value, "0") != 0;
+        cfg->nats_tls = value_len > 0 && !(value_len == 1 && value[0] == '0');
         return ESP_OK;
     }
-    if (strcmp(name, "nats_port") == 0)
+    if (name_is(name, name_len, "nats_port"))
     {
+        if (value_len == 0 || value_len >= 8)
+            return ESP_ERR_INVALID_ARG;
+        char tmp[8];
+        memcpy(tmp, value, value_len);
+        tmp[value_len] = '\0';
         char *end = NULL;
-        unsigned long port = strtoul(value, &end, 10);
-        if (!value[0] || (end && *end) || port == 0 || port > 65535)
+        unsigned long port = strtoul(tmp, &end, 10);
+        if (end == tmp || *end != '\0' || port == 0 || port > 65535)
             return ESP_ERR_INVALID_ARG;
         cfg->nats_port = (uint16_t)port;
         return ESP_OK;
@@ -158,21 +194,46 @@ static esp_err_t apply_form_field(tinyblok_config_t *cfg, const char *name, cons
     return ESP_OK;
 }
 
-static char *find_header_param(char *headers, const char *headers_end, const char *param)
+static const char *memmem_bounded(const char *hay, size_t hay_len, const char *needle, size_t needle_len)
 {
-    char needle[32];
-    snprintf(needle, sizeof(needle), "%s=\"", param);
-    for (char *p = strstr(headers, needle); p && p < headers_end; p = strstr(p + 1, needle))
-        return p + strlen(needle);
+    if (needle_len == 0 || needle_len > hay_len)
+        return NULL;
+    for (size_t i = 0; i + needle_len <= hay_len; i++)
+    {
+        if (hay[i] == needle[0] && memcmp(hay + i, needle, needle_len) == 0)
+            return hay + i;
+    }
     return NULL;
 }
 
-static esp_err_t apply_multipart_form(char *body, const char *boundary, tinyblok_config_t *cfg)
+static esp_err_t find_part_name(const char *headers, size_t headers_len,
+                                const char **name_out, size_t *name_len_out)
+{
+    static const char key[] = " name=\"";
+    const char *p = memmem_bounded(headers, headers_len, key, sizeof(key) - 1);
+    if (!p)
+        return ESP_ERR_INVALID_ARG;
+    p += sizeof(key) - 1;
+    size_t remaining = (size_t)(headers + headers_len - p);
+    const char *q = memchr(p, '"', remaining);
+    if (!q)
+        return ESP_ERR_INVALID_ARG;
+    *name_out = p;
+    *name_len_out = (size_t)(q - p);
+    return ESP_OK;
+}
+
+static esp_err_t apply_multipart_form(const char *body, size_t body_len,
+                                      const char *boundary, tinyblok_config_t *cfg)
 {
     char marker[96];
-    snprintf(marker, sizeof(marker), "--%s", boundary);
-    const size_t marker_len = strlen(marker);
-    char *part = strstr(body, marker);
+    int marker_n = snprintf(marker, sizeof(marker), "--%s", boundary);
+    if (marker_n < 0 || (size_t)marker_n >= sizeof(marker))
+        return ESP_ERR_INVALID_ARG;
+    const size_t marker_len = (size_t)marker_n;
+
+    const char *body_end = body + body_len;
+    const char *part = memmem_bounded(body, body_len, marker, marker_len);
     if (!part)
         return ESP_ERR_INVALID_ARG;
 
@@ -180,32 +241,33 @@ static esp_err_t apply_multipart_form(char *body, const char *boundary, tinyblok
     while (part)
     {
         part += marker_len;
-        if (strncmp(part, "--", 2) == 0)
+        if (part + 2 > body_end)
+            return ESP_ERR_INVALID_ARG;
+        if (part[0] == '-' && part[1] == '-')
             break;
-        if (strncmp(part, "\r\n", 2) == 0)
+        if (part[0] == '\r' && part[1] == '\n')
             part += 2;
 
-        char *headers_end = strstr(part, "\r\n\r\n");
+        static const char sep[] = "\r\n\r\n";
+        const char *headers_end = memmem_bounded(part, (size_t)(body_end - part), sep, sizeof(sep) - 1);
         if (!headers_end)
             return ESP_ERR_INVALID_ARG;
-        char *name_start = find_header_param(part, headers_end, "name");
-        if (!name_start)
-            return ESP_ERR_INVALID_ARG;
-        char *name_end = strchr(name_start, '"');
-        if (!name_end || name_end > headers_end)
-            return ESP_ERR_INVALID_ARG;
-        *name_end = '\0';
 
-        char *value = headers_end + 4;
-        char *next = strstr(value, marker);
+        const char *name;
+        size_t name_len;
+        ESP_RETURN_ON_ERROR(find_part_name(part, (size_t)(headers_end - part), &name, &name_len),
+                            TAG, "find part name");
+
+        const char *value = headers_end + (sizeof(sep) - 1);
+        const char *next = memmem_bounded(value, (size_t)(body_end - value), marker, marker_len);
         if (!next)
             return ESP_ERR_INVALID_ARG;
-        char *value_end = next;
+        const char *value_end = next;
         if (value_end >= value + 2 && value_end[-2] == '\r' && value_end[-1] == '\n')
             value_end -= 2;
-        *value_end = '\0';
 
-        ESP_RETURN_ON_ERROR(apply_form_field(cfg, name_start, value), TAG, "apply form field");
+        ESP_RETURN_ON_ERROR(apply_form_field(cfg, name, name_len, value, (size_t)(value_end - value)),
+                            TAG, "apply form field");
         part = next;
     }
 
@@ -216,7 +278,8 @@ static esp_err_t apply_multipart_form(char *body, const char *boundary, tinyblok
     return ESP_OK;
 }
 
-static esp_err_t apply_settings_form(httpd_req_t *req, char *body, tinyblok_config_t *cfg)
+static esp_err_t apply_settings_form(httpd_req_t *req, const char *body, size_t body_len,
+                                     tinyblok_config_t *cfg)
 {
     char content_type[128];
     size_t content_type_len = httpd_req_get_hdr_value_len(req, "Content-Type");
@@ -236,12 +299,12 @@ static esp_err_t apply_settings_form(httpd_req_t *req, char *body, tinyblok_conf
         if (end)
             *end = '\0';
     }
-    return apply_multipart_form(body, boundary, cfg);
+    return apply_multipart_form(body, body_len, boundary, cfg);
 }
 
-static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap)
+static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap, size_t *out_len)
 {
-    if (req->content_len == 0 || req->content_len >= cap)
+    if (req->content_len == 0 || req->content_len > cap)
         return ESP_ERR_INVALID_SIZE;
     size_t off = 0;
     while (off < req->content_len)
@@ -251,7 +314,7 @@ static esp_err_t read_request_body(httpd_req_t *req, char *buf, size_t cap)
             return ESP_FAIL;
         off += (size_t)n;
     }
-    buf[off] = '\0';
+    *out_len = off;
     return ESP_OK;
 }
 
@@ -264,7 +327,7 @@ static esp_err_t captive_get(httpd_req_t *req)
 {
     /*
      * Captive-network assistants are short-lived and dislike redirect loops.
-     * Serve the same local setup page directly for every probe/unknown URL.
+     * Serve a tiny local page for every probe/unknown URL; / has the full UI.
      */
     return send_captive_html(req);
 }
@@ -301,12 +364,64 @@ static esp_err_t settings_get(httpd_req_t *req)
     return err;
 }
 
+static const char *wifi_auth_name(uint8_t authmode)
+{
+    switch ((wifi_auth_mode_t)authmode)
+    {
+    case WIFI_AUTH_OPEN:
+        return "open";
+    case WIFI_AUTH_WEP:
+        return "wep";
+    case WIFI_AUTH_WPA_PSK:
+        return "wpa";
+    case WIFI_AUTH_WPA2_PSK:
+        return "wpa2";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+        return "wpa/wpa2";
+    case WIFI_AUTH_WPA2_ENTERPRISE:
+        return "wpa2-enterprise";
+    case WIFI_AUTH_WPA3_PSK:
+        return "wpa3";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return "wpa2/wpa3";
+    default:
+        return "unknown";
+    }
+}
+
+static esp_err_t wifi_scan_get(httpd_req_t *req)
+{
+    tinyblok_wifi_scan_result_t results[TINYBLOK_WIFI_SCAN_MAX];
+    size_t count = 0;
+    esp_err_t err = tinyblok_wifi_scan(results, TINYBLOK_WIFI_SCAN_MAX, &count);
+    if (err != ESP_OK)
+        return json_send_error(req, 503, esp_err_to_name(err));
+
+    json_begin(req, 200);
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"networks\":[", HTTPD_RESP_USE_STRLEN),
+                        TAG, "send scan begin");
+    for (size_t i = 0; i < count; i++)
+    {
+        char prefix[96];
+        snprintf(prefix, sizeof(prefix), "%s{\"ssid\":\"", i == 0 ? "" : ",");
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, prefix, HTTPD_RESP_USE_STRLEN), TAG, "send scan item");
+        ESP_RETURN_ON_ERROR(json_send_escaped_chunk(req, results[i].ssid), TAG, "send scan ssid");
+        char suffix[96];
+        snprintf(suffix, sizeof(suffix), "\",\"rssi\":%d,\"auth\":\"%s\"}",
+                 (int)results[i].rssi, wifi_auth_name(results[i].authmode));
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, suffix, HTTPD_RESP_USE_STRLEN), TAG, "send scan suffix");
+    }
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "]}", HTTPD_RESP_USE_STRLEN), TAG, "send scan end");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t settings_post(httpd_req_t *req)
 {
     char *body = malloc(8192);
     if (!body)
         return json_send_error(req, 500, "no memory");
-    esp_err_t err = read_request_body(req, body, 8192);
+    size_t body_len = 0;
+    esp_err_t err = read_request_body(req, body, 8192, &body_len);
     if (err != ESP_OK)
     {
         free(body);
@@ -321,7 +436,7 @@ static esp_err_t settings_post(httpd_req_t *req)
     }
     err = tinyblok_config_load(cfg);
     if (err == ESP_OK)
-        err = apply_settings_form(req, body, cfg);
+        err = apply_settings_form(req, body, body_len, cfg);
     free(body);
     if (err != ESP_OK)
     {
@@ -393,6 +508,7 @@ static esp_err_t register_handlers(void)
     const httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get};
     const httpd_uri_t status = {.uri = "/api/status", .method = HTTP_GET, .handler = status_get};
     const httpd_uri_t settings_get_uri = {.uri = "/api/settings", .method = HTTP_GET, .handler = settings_get};
+    const httpd_uri_t wifi_scan = {.uri = "/api/wifi-scan", .method = HTTP_GET, .handler = wifi_scan_get};
     const httpd_uri_t settings_post_uri = {.uri = "/api/settings", .method = HTTP_POST, .handler = settings_post};
     const httpd_uri_t reboot = {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post};
     const httpd_uri_t reset = {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = factory_reset_post};
@@ -400,6 +516,7 @@ static esp_err_t register_handlers(void)
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), TAG, "register /");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &status), TAG, "register status");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_get_uri), TAG, "register settings get");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &wifi_scan), TAG, "register wifi scan");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &settings_post_uri), TAG, "register settings post");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &reboot), TAG, "register reboot");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &reset), TAG, "register reset");
@@ -415,7 +532,7 @@ static esp_err_t start_server(bool setup)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.stack_size = 6144;
-    cfg.max_uri_handlers = 8;
+    cfg.max_uri_handlers = 9;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     ESP_RETURN_ON_ERROR(httpd_start(&server, &cfg), TAG, "start http server");
     ESP_RETURN_ON_ERROR(register_handlers(), TAG, "register handlers");
