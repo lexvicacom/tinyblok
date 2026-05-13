@@ -6,9 +6,7 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 
 ## Install
 
-The fastest path is browser-based flashing. Serve [docs/install.html](./docs/install.html)
-from GitHub Pages with release binaries published under `docs/firmware/latest/`,
-open it in Chrome or Edge, plug the board in over USB, and pick a port.
+The fastest path is browser-based flashing: open <a href="https://flash.monoblok.host" target="_blank" rel="noopener">flash.monoblok.host</a> in Chrome or Edge, plug the board in over USB, and pick a port.
 
 To build and flash from source:
 
