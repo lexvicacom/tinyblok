@@ -16,14 +16,24 @@
 #include "sdkconfig.h"
 #include "tinyblok_captive_html.h"
 #include "tinyblok_config.h"
+#include "display.h"
 #include "tinyblok_setup_html.h"
 #include "tinyblok_wifi.h"
+
+#ifndef CONFIG_TINYBLOK_NATS_TLS
+#define CONFIG_TINYBLOK_NATS_TLS 0
+#endif
+#ifndef CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+#define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
+#endif
 
 static const char *TAG = "tinyblok_web";
 
 static httpd_handle_t server;
 static bool setup_mode;
 static char last_error[160];
+
+static void reboot_task(void *arg);
 
 static esp_err_t json_begin(httpd_req_t *req, int status)
 {
@@ -117,6 +127,7 @@ static esp_err_t send_settings_json(httpd_req_t *req, const tinyblok_config_t *c
                      "\"nats_password\":\"\",\"nats_token\":\"\","
                      "\"nats_password_present\":%s,\"nats_token_present\":%s,"
                      "\"nats_auth\":\"%s\",\"nats_tls\":%s,\"nats_creds_present\":%s,"
+                     "\"nats_tls_supported\":%s,\"nats_creds_supported\":%s,"
                      "\"configured\":%s}",
                      cfg->device_name,
                      cfg->wifi_ssid,
@@ -128,6 +139,8 @@ static esp_err_t send_settings_json(httpd_req_t *req, const tinyblok_config_t *c
                      cfg->nats_auth,
                      cfg->nats_tls ? "true" : "false",
                      cfg->nats_creds[0] ? "true" : "false",
+                     CONFIG_TINYBLOK_NATS_TLS ? "true" : "false",
+                     CONFIG_TINYBLOK_NATS_CREDS_SUPPORT ? "true" : "false",
                      cfg->configured ? "true" : "false");
     if (n < 0 || (size_t)n >= sizeof(body))
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "settings overflow");
@@ -169,7 +182,13 @@ static esp_err_t apply_form_field(tinyblok_config_t *cfg, const char *name, size
     if (name_is(name, name_len, "nats_token"))
         return copy_form_value(cfg->nats_token, sizeof(cfg->nats_token), value, value_len, false);
     if (name_is(name, name_len, "nats_auth"))
+    {
+#if !CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+        if (value_len == 5 && memcmp(value, "creds", 5) == 0)
+            return ESP_ERR_NOT_SUPPORTED;
+#endif
         return copy_form_value(cfg->nats_auth, sizeof(cfg->nats_auth), value, value_len, true);
+    }
     if (name_is(name, name_len, "nats_creds_file"))
         return copy_form_value(cfg->nats_creds, sizeof(cfg->nats_creds), value, value_len, false);
     if (name_is(name, name_len, "nats_tls"))
@@ -272,7 +291,15 @@ static esp_err_t apply_multipart_form(const char *body, size_t body_len,
     }
 
     if (strcmp(cfg->nats_auth, "creds") == 0)
+    {
+#if !CONFIG_TINYBLOK_NATS_CREDS_SUPPORT
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
+#if !CONFIG_TINYBLOK_NATS_TLS
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
         cfg->nats_tls = true;
+    }
     if (cfg->wifi_ssid[0] == '\0' || cfg->device_name[0] == '\0' || cfg->nats_host[0] == '\0')
         return ESP_ERR_INVALID_ARG;
     return ESP_OK;
@@ -440,7 +467,10 @@ static esp_err_t settings_post(httpd_req_t *req)
     free(body);
     if (err != ESP_OK)
     {
-        snprintf(last_error, sizeof(last_error), "Invalid settings: %s", esp_err_to_name(err));
+        if (err == ESP_ERR_NOT_SUPPORTED)
+            snprintf(last_error, sizeof(last_error), ".creds auth is not compiled into this firmware");
+        else
+            snprintf(last_error, sizeof(last_error), "Invalid settings: %s", esp_err_to_name(err));
         free(cfg);
         return json_send_error(req, 400, last_error);
     }
@@ -450,11 +480,20 @@ static esp_err_t settings_post(httpd_req_t *req)
         cfg->configured = false;
         err = tinyblok_config_save(cfg);
         if (err == ESP_OK)
+        {
+            snprintf(last_error, sizeof(last_error), "Attempting Wi-Fi connection to %.64s...", cfg->wifi_ssid);
             err = tinyblok_wifi_connect_sta(cfg->wifi_ssid, cfg->wifi_password, 15000);
+        }
         if (err != ESP_OK)
         {
-            snprintf(last_error, sizeof(last_error), "Wi-Fi connection failed: %s", esp_err_to_name(err));
+            if (err == ESP_FAIL)
+                snprintf(last_error, sizeof(last_error), "Wi-Fi connection failed. Check the SSID/password and try again.");
+            else if (err == ESP_ERR_TIMEOUT)
+                snprintf(last_error, sizeof(last_error), "Wi-Fi connection timed out. Check signal, SSID, and password.");
+            else
+                snprintf(last_error, sizeof(last_error), "Wi-Fi connection failed: %s", esp_err_to_name(err));
             ESP_LOGW(TAG, "%s", last_error);
+            tinyblok_display_setup_portal("TINYBLOK");
             free(cfg);
             return json_send_message(req, 409, false, "error", last_error);
         }
@@ -475,7 +514,9 @@ static esp_err_t settings_post(httpd_req_t *req)
     if (err != ESP_OK)
         return json_send_error(req, 500, esp_err_to_name(err));
     last_error[0] = '\0';
-    return json_send_message(req, 200, true, "message", "Settings saved.");
+    err = json_send_message(req, 200, true, "message", "Settings saved. Rebooting.");
+    xTaskCreate(reboot_task, "tinyblok_settings_reboot", 2048, NULL, 1, NULL);
+    return err;
 }
 
 static void reboot_task(void *arg)

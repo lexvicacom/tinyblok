@@ -30,7 +30,7 @@ static const char *TAG = "display";
 #define LCD_ADDR_SECONDARY 0x3F
 #define LCD_SDA_GPIO ((gpio_num_t)CONFIG_TINYBLOK_DISPLAY_I2C_SDA_GPIO)
 #define LCD_SCL_GPIO ((gpio_num_t)CONFIG_TINYBLOK_DISPLAY_I2C_SCL_GPIO)
-#define LCD_I2C_HZ 10000
+#define LCD_I2C_HZ 100000
 #define DISPLAY_TEXT_COLS 16
 
 #define OLED_ADDR_PRIMARY 0x3C
@@ -41,7 +41,7 @@ static const char *TAG = "display";
 #if CONFIG_TINYBLOK_DISPLAY_OLED_128X32
 #define OLED_HEIGHT 32
 #define OLED_COM_PINS 0x02
-#define OLED_TEXT_FIRST_PAGE 0
+#define OLED_TEXT_FIRST_PAGE 1
 #if CONFIG_TINYBLOK_DISPLAY_OLED_128X32_THREE_ROWS
 #define OLED_TEXT_PAGE_STEP 1
 #define OLED_TEXT_ROWS 3
@@ -52,7 +52,7 @@ static const char *TAG = "display";
 #elif CONFIG_TINYBLOK_DISPLAY_OLED_128X48
 #define OLED_HEIGHT 48
 #define OLED_COM_PINS 0x12
-#define OLED_TEXT_FIRST_PAGE 0
+#define OLED_TEXT_FIRST_PAGE 1
 #define OLED_TEXT_PAGE_STEP 2
 #define OLED_TEXT_ROWS 3
 #else
@@ -84,6 +84,7 @@ typedef struct
 {
     bool wifi_connected;
     bool setup_portal;
+    bool nats_connected;
     char ssid[33];
     char ip[16];
     char nats_host[64];
@@ -110,6 +111,12 @@ static uint8_t oled_addr;
 static const display_driver_t *active_display;
 static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
 static display_state_t state;
+static bool oled_setup_screen_drawn;
+static bool oled_status_bar_drawn;
+static bool oled_status_bar_wifi_connected;
+static bool oled_ip_arrow_drawn;
+static bool oled_ip_arrow_connected;
+static bool display_needs_clear;
 
 static void display_notify(void)
 {
@@ -123,9 +130,17 @@ void tinyblok_display_wifi_connecting(const char *ssid)
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = false;
     state.setup_portal = false;
+    state.nats_connected = false;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     state.ip[0] = '\0';
+    state.nats_host[0] = '\0';
+    state.nats_ip[0] = '\0';
+    state.nats_port = 0;
     portEXIT_CRITICAL(&state_mux);
+    oled_setup_screen_drawn = false;
+    oled_status_bar_drawn = false;
+    oled_ip_arrow_drawn = false;
+    display_needs_clear = true;
     display_notify();
 }
 
@@ -134,9 +149,17 @@ void tinyblok_display_setup_portal(const char *ssid)
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = false;
     state.setup_portal = true;
+    state.nats_connected = false;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     state.ip[0] = '\0';
+    state.nats_host[0] = '\0';
+    state.nats_ip[0] = '\0';
+    state.nats_port = 0;
     portEXIT_CRITICAL(&state_mux);
+    oled_setup_screen_drawn = false;
+    oled_status_bar_drawn = false;
+    oled_ip_arrow_drawn = false;
+    display_needs_clear = false;
     display_notify();
 }
 
@@ -151,6 +174,10 @@ void tinyblok_display_wifi_connected(const char *ssid, const esp_ip4_addr_t *ip)
     else
         state.ip[0] = '\0';
     portEXIT_CRITICAL(&state_mux);
+    oled_setup_screen_drawn = false;
+    oled_status_bar_drawn = false;
+    oled_ip_arrow_drawn = false;
+    display_needs_clear = false;
     display_notify();
 }
 
@@ -159,8 +186,16 @@ void tinyblok_display_wifi_disconnected(void)
     portENTER_CRITICAL(&state_mux);
     state.wifi_connected = false;
     state.setup_portal = false;
+    state.nats_connected = false;
     state.ip[0] = '\0';
+    state.nats_host[0] = '\0';
+    state.nats_ip[0] = '\0';
+    state.nats_port = 0;
     portEXIT_CRITICAL(&state_mux);
+    oled_setup_screen_drawn = false;
+    oled_status_bar_drawn = false;
+    oled_ip_arrow_drawn = false;
+    display_needs_clear = true;
     display_notify();
 }
 
@@ -185,6 +220,7 @@ static void app_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         strlcpy(state.nats_host, event->host, sizeof(state.nats_host));
         strlcpy(state.nats_ip, event->ip, sizeof(state.nats_ip));
         state.nats_port = event->port;
+        state.nats_connected = true;
         portEXIT_CRITICAL(&state_mux);
         display_notify();
     }
@@ -194,6 +230,7 @@ static void app_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         state.nats_host[0] = '\0';
         state.nats_ip[0] = '\0';
         state.nats_port = 0;
+        state.nats_connected = false;
         portEXIT_CRITICAL(&state_mux);
         display_notify();
     }
@@ -313,6 +350,146 @@ static esp_err_t oled_clear(void)
         ESP_RETURN_ON_ERROR(oled_cmd(0x10), TAG, "oled high column");
         ESP_RETURN_ON_ERROR(oled_tx(line, sizeof(line)), TAG, "oled clear page");
     }
+    return ESP_OK;
+}
+
+static esp_err_t oled_clear_page(uint8_t page)
+{
+    uint8_t line[1 + OLED_WIDTH];
+    memset(line, 0, sizeof(line));
+    line[0] = 0x40;
+
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(0xB0 | page)), TAG, "oled page");
+    ESP_RETURN_ON_ERROR(oled_cmd(0x00), TAG, "oled low column");
+    ESP_RETURN_ON_ERROR(oled_cmd(0x10), TAG, "oled high column");
+    return oled_tx(line, sizeof(line));
+}
+
+static esp_err_t oled_write_columns(uint8_t page, uint8_t pixel_col, const uint8_t *columns, uint8_t width)
+{
+    uint8_t bytes[1 + 32];
+    if (width > 32 || pixel_col >= OLED_WIDTH)
+        return ESP_ERR_INVALID_ARG;
+    if ((uint16_t)pixel_col + width > OLED_WIDTH)
+        width = (uint8_t)(OLED_WIDTH - pixel_col);
+
+    bytes[0] = 0x40;
+    memcpy(&bytes[1], columns, width);
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(0xB0 | page)), TAG, "oled page");
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(pixel_col & 0x0F)), TAG, "oled low column");
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(0x10 | (pixel_col >> 4))), TAG, "oled high column");
+    return oled_tx(bytes, (size_t)width + 1);
+}
+
+static esp_err_t oled_draw_pattern(uint8_t x, uint8_t y, uint8_t width, uint8_t height, const char *const *rows)
+{
+    if (width > 32 || x >= OLED_WIDTH || y >= OLED_HEIGHT)
+        return ESP_ERR_INVALID_ARG;
+    if ((uint16_t)x + width > OLED_WIDTH)
+        width = (uint8_t)(OLED_WIDTH - x);
+
+    const uint8_t first_page = y / 8;
+    const uint8_t last_page = (uint8_t)((y + height - 1) / 8);
+    for (uint8_t page = first_page; page <= last_page && page < OLED_PAGE_COUNT; page++)
+    {
+        uint8_t columns[32] = {0};
+        for (uint8_t row = 0; row < height; row++)
+        {
+            const uint8_t pixel_y = (uint8_t)(y + row);
+            if (pixel_y / 8 != page || pixel_y >= OLED_HEIGHT)
+                continue;
+            const uint8_t bit = (uint8_t)(1U << (pixel_y & 7));
+            for (uint8_t col = 0; col < width; col++)
+            {
+                const char pixel = rows[row][col];
+                if (pixel != '.' && pixel != ' ')
+                    columns[col] |= bit;
+            }
+        }
+        ESP_RETURN_ON_ERROR(oled_write_columns(page, x, columns, width), TAG, "oled pattern");
+    }
+    return ESP_OK;
+}
+
+static esp_err_t oled_write_text_at(uint8_t page, uint8_t col, const char *text)
+{
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(0xB0 | page)), TAG, "oled page");
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(col & 0x0F)), TAG, "oled low column");
+    ESP_RETURN_ON_ERROR(oled_cmd((uint8_t)(0x10 | (col >> 4))), TAG, "oled high column");
+
+    uint8_t bytes[1 + DISPLAY_TEXT_COLS * OLED_CELL_WIDTH];
+    bytes[0] = 0x40;
+    size_t out = 1;
+    for (size_t i = 0; text[i] != '\0' && out + OLED_CELL_WIDTH <= sizeof(bytes); i++)
+    {
+        const uint8_t *glyph = tinyblok_oled_glyph(text[i]);
+        for (size_t j = 0; j < TINYBLOK_OLED_GLYPH_WIDTH; j++)
+            bytes[out++] = glyph[j];
+        bytes[out++] = 0x00;
+    }
+    return oled_tx(bytes, out);
+}
+
+static esp_err_t oled_write_text_centered(uint8_t page, const char *text)
+{
+    const size_t len = strlen(text);
+    size_t width = len * OLED_CELL_WIDTH;
+    if (width > 0)
+        width--;
+    const uint8_t col = width < OLED_WIDTH ? (uint8_t)((OLED_WIDTH - width) / 2) : 0;
+    return oled_write_text_at(page, col, text);
+}
+
+static esp_err_t oled_draw_status_bar(const display_state_t *copy)
+{
+    // Wi-Fi glyph adapted from Open Iconic's MIT-licensed 8px wifi icon.
+    static const char *const wifi_icon[8] = {
+        ".#####..",
+        "#.....#.",
+        "........",
+        "..###...",
+        "........",
+        "........",
+        "...##...",
+        "...##...",
+    };
+    if (oled_status_bar_drawn && oled_status_bar_wifi_connected == copy->wifi_connected)
+        return ESP_OK;
+
+    ESP_RETURN_ON_ERROR(oled_clear_page(0), TAG, "oled status clear");
+    if (copy->wifi_connected)
+        ESP_RETURN_ON_ERROR(oled_draw_pattern(116, 0, 8, 8, wifi_icon), TAG, "oled wifi icon");
+    oled_status_bar_drawn = true;
+    oled_status_bar_wifi_connected = copy->wifi_connected;
+    return ESP_OK;
+}
+
+static esp_err_t oled_draw_ip_arrow(bool connected)
+{
+    static const char *const arrow[8] = {
+        "##..........",
+        "####........",
+        "######......",
+        "########....",
+        "######......",
+        "####........",
+        "##..........",
+        "............",
+    };
+
+    if (oled_ip_arrow_drawn && oled_ip_arrow_connected == connected)
+        return ESP_OK;
+
+    uint8_t clear[12] = {0};
+    ESP_RETURN_ON_ERROR(oled_write_columns(OLED_TEXT_FIRST_PAGE + 2 * OLED_TEXT_PAGE_STEP, 0, clear, sizeof(clear)),
+                        TAG, "oled ip arrow clear");
+    if (connected)
+        ESP_RETURN_ON_ERROR(oled_draw_pattern(0, OLED_TEXT_FIRST_PAGE * 8 + 2 * OLED_TEXT_PAGE_STEP * 8,
+                                              12, 8, arrow),
+                            TAG, "oled ip arrow");
+
+    oled_ip_arrow_drawn = true;
+    oled_ip_arrow_connected = connected;
     return ESP_OK;
 }
 
@@ -549,10 +726,21 @@ static esp_err_t display_init_hw(void)
 
 static void draw_connecting(uint32_t tick)
 {
+    display_state_t copy;
+    portENTER_CRITICAL(&state_mux);
+    copy = state;
+    portEXIT_CRITICAL(&state_mux);
+
+    if (display_needs_clear)
+    {
+        active_display->clear();
+        display_needs_clear = false;
+    }
+
     char line1[DISPLAY_TEXT_COLS + 1];
     char line2[DISPLAY_TEXT_COLS + 1];
-    snprintf(line1, sizeof(line1), "Hello!");
-    snprintf(line2, sizeof(line2), "WiFi%.*s", (int)(tick % 4), "...");
+    snprintf(line1, sizeof(line1), "tinyblok");
+    snprintf(line2, sizeof(line2), "%.8s%.*s", copy.ssid, (int)(tick % 4), "...");
     active_display->set_cursor(0, 0);
     active_display->write_padded(line1);
     active_display->set_cursor(1, 0);
@@ -571,7 +759,54 @@ static void draw_setup_portal(void)
     copy = state;
     portEXIT_CRITICAL(&state_mux);
 
-    if (active_display->rows >= 3)
+    if (active_display == &oled_driver)
+    {
+        // Wi-Fi glyph adapted from Open Iconic's MIT-licensed 24px wifi icon.
+        static const char *const large_wifi[24] = {
+            ".......#########........",
+            "...################.....",
+            ".####################...",
+            "#######.........######..",
+            ".###...............###..",
+            "........................",
+            "........................",
+            "........................",
+            "........................",
+            "........#######.........",
+            ".....############.......",
+            ".....############.......",
+            "......##......###.......",
+            "........................",
+            "........................",
+            "........................",
+            "........................",
+            "........................",
+            "..........###...........",
+            ".........#####..........",
+            "........######..........",
+            "........######..........",
+            ".........#####..........",
+            "..........###...........",
+        };
+        if (oled_setup_screen_drawn)
+            return;
+        oled_status_bar_drawn = false;
+        oled_ip_arrow_drawn = false;
+        display_needs_clear = false;
+        active_display->clear();
+        if (OLED_HEIGHT >= 64)
+        {
+            oled_draw_pattern(52, 20, 24, 24, large_wifi);
+            oled_write_text_centered(6, "TINYBLOK");
+        }
+        else
+        {
+            oled_draw_pattern(52, 8, 24, 24, large_wifi);
+            oled_write_text_centered(OLED_PAGE_COUNT - 1, "TINYBLOK");
+        }
+        oled_setup_screen_drawn = true;
+    }
+    else if (active_display->rows >= 3)
     {
         active_display->set_cursor(0, 0);
         active_display->write_padded("Connect WiFi:");
@@ -605,9 +840,16 @@ static void draw_status(void)
     char line2[DISPLAY_TEXT_COLS + 1];
     char line3[DISPLAY_TEXT_COLS + 1];
     snprintf(line1, sizeof(line1), "tinyblok NATS %s",
-             copy.nats_ip[0] != '\0' ? "OK" : "--");
+             copy.nats_connected ? "OK" : "--");
     snprintf(line2, sizeof(line2), "PUBs: %lu", (unsigned long)tinyblok_pub_count());
-    snprintf(line3, sizeof(line3), "%s%s", copy.nats_ip[0] != '\0' ? ">" : "", copy.nats_ip);
+    snprintf(line3, sizeof(line3), "%s", copy.nats_ip);
+
+    if (active_display == &oled_driver)
+    {
+        oled_draw_status_bar(&copy);
+        if (active_display->rows > 2)
+            oled_draw_ip_arrow(copy.nats_connected);
+    }
 
     active_display->set_cursor(0, 0);
     active_display->write_padded(line1);
@@ -615,8 +857,16 @@ static void draw_status(void)
     active_display->write_padded(line2);
     if (active_display->rows > 2)
     {
-        active_display->set_cursor(2, 0);
-        active_display->write_padded(line3);
+        if (active_display == &oled_driver && copy.nats_connected)
+        {
+            active_display->set_cursor(2, 2);
+            active_display->write_padded(line3);
+        }
+        else
+        {
+            active_display->set_cursor(2, 0);
+            active_display->write_padded(line3);
+        }
     }
 }
 
