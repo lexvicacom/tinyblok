@@ -10,6 +10,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
+CONFIG_TINYBLOK_NATS_TLS=y
+CONFIG_TINYBLOK_NATS_TLS_BUNDLE=y
+CONFIG_TINYBLOK_NATS_CREDS_SUPPORT=y
+
 # TweetNaCl signing (creds auth) plus the TLS handshake share the main task
 # stack. Default 3584 bytes overflows during crypto_sign — bump to 8 KB.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
