@@ -25,6 +25,7 @@ button{background:#3b443e;color:#f4f7f2;border-color:#3b443e;font-weight:700}.se
 .msg{min-height:1.5em;margin:12px 0;font-weight:650}.err{color:#ffb0a3}.ok{color:#9ff0a8}
 a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 .hint{margin:0;color:#526258;font-size:.92rem}
+.subhint{font-weight:400;color:#526258;font-size:.9rem}
 @media(max-width:620px){.row,.ssidrow{grid-template-columns:1fr}body{padding:14px}}
 </style>
 </head>
@@ -39,7 +40,7 @@ a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 <button class="secondary" type="button" id="scan">Scan</button>
 </div>
 <datalist id="wifi_networks"></datalist>
-<label>Wi-Fi password<input name="wifi_password" type="password" maxlength="127" autocomplete="current-password"></label>
+<label>Wi-Fi password<input name="wifi_password" type="password" maxlength="127" autocomplete="current-password"><span id="wifipwhint" class="subhint" hidden>Leave blank to keep saved password.</span></label>
 <label>Device name<input name="device_name" maxlength="63" value="tinyblok" required></label>
 <p class="hint">After setup, open settings at http://device-name.local, for example http://tinyblok.local.</p>
 <div class="row">
@@ -47,7 +48,7 @@ a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 <label>NATS port<input name="nats_port" type="number" min="1" max="65535" value="4222" required></label>
 </div>
 <div class="row">
-<label>NATS auth<select name="nats_auth"><option value="none">None</option><option value="userpass">Username + password</option><option value="token">Token</option><option value="creds">.creds file</option></select></label>
+<label>NATS auth<select name="nats_auth"><option value="none">None</option><option value="userpass">Username + password</option><option value="token">Token</option><option value="creds" id="credsopt">.creds file</option></select></label>
 <label class="check"><input name="nats_tls" value="1" type="checkbox">Use TLS</label>
 </div>
 <div class="row" id="userpassrow" hidden>
@@ -63,11 +64,12 @@ a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 const $=s=>document.querySelector(s),msg=$('#msg'),form=$('#f');
 function show(t,c){msg.textContent=t||'';msg.className='msg '+(c||'')}
 function authChanged(){let a=form.elements.nats_auth.value,creds=a==='creds';form.elements.nats_tls.checked=creds||form.elements.nats_tls.checked;form.elements.nats_tls.disabled=creds;$('#userpassrow').hidden=a!=='userpass';$('#tokenrow').hidden=a!=='token';$('#credsrow').hidden=!creds}
-async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();if(st.last_error)show(st.last_error,'err')}
+async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();let co=$('#credsopt');if(!j.nats_creds_supported){co.disabled=true;co.textContent='.creds file (not in firmware)';if(j.nats_auth==='creds')j.nats_auth='none'}$('#wifipwhint').hidden=!j.configured;for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();if(st.last_error)show(st.last_error,'err')}
 form.onchange=e=>{if(e.target.name==='nats_auth')authChanged()};
 async function scanWifi(){show('Scanning Wi-Fi...');let r=await fetch('/api/wifi-scan');let j=await r.json();if(!r.ok)throw Error(j.error||'scan failed');let dl=$('#wifi_networks');dl.textContent='';for(const n of j.networks||[]){let o=document.createElement('option');o.value=n.ssid;o.label=`${n.rssi} dBm ${n.auth}`;dl.appendChild(o)}show((j.networks&&j.networks.length)?'Select a network or type one.':'No networks found','ok')}
 $('#scan').onclick=()=>scanWifi().catch(e=>show(String(e).replace(/^Error: /,''),'err'));
-form.onsubmit=async e=>{e.preventDefault();show('Saving...');let d=new FormData(form);if(form.elements.nats_auth.value==='creds')d.set('nats_tls','1');let r=await fetch('/api/settings',{method:'POST',body:d});let j=await r.json();show(j.message||j.error,(r.ok&&j.ok)?'ok':'err')};
+async function pollResult(){for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,1000));try{let r=await fetch('/api/status',{cache:'no-store'}),j=await r.json();if(j.last_error){show(j.last_error,'err');return true}}catch(e){}}return false}
+form.onsubmit=async e=>{e.preventDefault();show('Attempting to update...');let d=new FormData(form);if(form.elements.nats_auth.value==='creds')d.set('nats_tls','1');try{let r=await fetch('/api/settings',{method:'POST',body:d});let j=await r.json();show(j.message||j.error,(r.ok&&j.ok)?'ok':'err')}catch(err){show('Attempting to update...');if(!await pollResult())show('Connection interrupted while updating. Reconnect to TINYBLOK and check setup status.','err')}};
 $('#reset').onclick=async()=>{if(confirm('Factory reset tinyblok settings?')){await fetch('/api/factory-reset',{method:'POST'});show('Rebooting...','ok')}};
 load().catch(e=>show(String(e),'err'));
 </script>
