@@ -35,12 +35,16 @@ console or pre-baked credentials are needed.
 4. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
 5. On the LAN, the device appears at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
 
+<img width="1012" height="690" alt="Tinyblok captive setup portal" src="./docs/captive.png" />
+
 The device name is used as the mDNS hostname after setup. Use simple letters,
 numbers, spaces, underscores, or hyphens; firmware normalizes it to a
 lowercase `.local` hostname with hyphens.
 
 If a display is attached during setup, it shows the setup AP and `http://10.42.0.1` when there is enough room.
 Display I2C defaults are SDA GPIO14 and SCL GPIO15; change them in menuconfig if your board is wired differently.
+
+<img width="576" height="768" alt="Tinyblok ESP32-C6 breadboard wiring" src="./docs/breadboard.jpg" />
 
 ## What it does
 
