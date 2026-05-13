@@ -31,20 +31,17 @@ console or pre-baked credentials are needed.
 
 1. Join the `TINYBLOK` Wi-Fi network advertised by the device.
 2. The captive portal should open automatically. If it does not, open `http://10.42.0.1`.
-3. Enter Wi-Fi, device name, and NATS settings.
-4. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
-5. On the LAN, the device appears at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
 
 <img width="1012" height="690" alt="Tinyblok captive setup portal" src="./docs/captive.png" />
+
+3. Enter Wi-Fi, device name, and NATS settings.
+4. Save. Tinyblok attempts the Wi-Fi connection, stores the config as valid on success, and reboots.
+5. Now configured, the settings page is available at `http://tinyblok.local` by default. If you set the device name to `kitchen`, open `http://kitchen.local`.
 
 The device name is used as the mDNS hostname after setup. Use simple letters,
 numbers, spaces, underscores, or hyphens; firmware normalizes it to a
 lowercase `.local` hostname with hyphens.
 
-If a display is attached during setup, it shows the setup AP and `http://10.42.0.1` when there is enough room.
-Display I2C defaults are SDA GPIO14 and SCL GPIO15; change them in menuconfig if your board is wired differently.
-
-<img width="576" height="768" alt="Tinyblok ESP32-C6 breadboard wiring" src="./docs/breadboard.jpg" />
 
 ## What it does
 
@@ -54,7 +51,7 @@ Display I2C defaults are SDA GPIO14 and SCL GPIO15; change them in menuconfig if
 - Can optionally render device status on attached LCD/OLED displays, including NATS connection status and publish counters.
 - Runtime Wi-Fi and NATS settings are stored in NVS and editable later over HTTP.
 
-![Tinyblok LCD and OLED display modes](./docs/display-showcase.jpg)
+<img width="576" height="768" alt="Tinyblok ESP32-C6 breadboard wiring" src="./docs/breadboard.jpg" />
 
 <img width="1145" height="630" alt="Screenshot 2026-05-03 at 16 26 21" src="https://github.com/user-attachments/assets/b3b0980e-fd8d-4564-9d7a-4d0aae1448ed" />
 
