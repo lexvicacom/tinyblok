@@ -5,52 +5,57 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>tinyblok installer</title>
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;font-size:15px;letter-spacing:-0.005em;color:#17201a;background:#101813;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;font-size:15px;color:#1d2420;background:#f7f7f3;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;background-image:linear-gradient(rgba(98,141,106,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(98,141,106,.13) 1px,transparent 1px);background-size:28px 28px}
-main{width:min(760px,100%);color:#e8efe7}
-h1{margin:0 0 8px;color:#9ff0a8;font-size:1.55rem}
-h2{margin:0 0 8px;font-size:1.1rem;color:#17201a}
-p,li{color:#c3d0c0;line-height:1.55}
-a{color:#9ff0a8}
-.panel{background:#f6f4ea;color:#17201a;border:1px solid #47624d;border-radius:8px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.35);margin-bottom:18px}
-.panel p,.panel li{color:#334039}
-.panel a{color:#2f5a3a}
-esp-web-install-button{display:block;margin:14px 0}
-.activate-btn{font:inherit;font-weight:600;font-size:.98rem;color:#17201a;background:#9ff0a8;border:1px solid #47624d;border-radius:6px;padding:9px 16px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.08);transition:background .12s ease,transform .04s ease}
-.activate-btn:hover{background:#b4f4ba}
+body{margin:0;min-height:100vh;padding:32px 20px 42px;background:#f7f7f3}
+main{width:min(920px,100%);margin:0 auto;color:#1d2420}
+header{max-width:720px;margin:0 0 24px}
+h1{margin:0 0 10px;color:#111814;font-size:1.85rem;line-height:1.15;font-weight:700}
+h2{margin:0 0 12px;font-size:1.05rem;line-height:1.25;color:#111814}
+p,li{color:#48524c;line-height:1.58}
+p{margin:0 0 14px}
+ol{margin:12px 0 0;padding-left:22px}
+li+li{margin-top:6px}
+a{color:#245a38;text-underline-offset:3px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:18px;align-items:start}
+.panel{background:#fff;color:#1d2420;border:1px solid #d8ddd5;border-radius:8px;padding:20px;margin-bottom:18px}
+.panel p,.panel li{color:#48524c}
+.panel a{color:#245a38}
+.primary-panel{border-color:#bfcabc}
+esp-web-install-button{display:block;margin:16px 0}
+.activate-btn{font:inherit;font-weight:650;font-size:.96rem;color:#fff;background:#245a38;border:1px solid #1d4b2f;border-radius:6px;padding:10px 15px;cursor:pointer;transition:background .12s ease,transform .04s ease}
+.activate-btn:hover{background:#1d4b2f}
 .activate-btn:active{transform:translateY(1px)}
-.activate-btn:focus-visible{outline:2px solid #2f5a3a;outline-offset:2px}
-.unsupported{display:block;margin:14px 0;padding:10px 12px;background:#fff3e0;border-left:3px solid #c97a1f;border-radius:4px;font-size:.92rem;color:#5a3a14}
-code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.9em;background:#e8e4d7;padding:2px 5px;border-radius:4px}
-figure{margin:14px 0 4px;text-align:center}
-figure img{max-width:280px;width:100%;height:auto;border-radius:6px;border:1px solid #c9c4b3}
-figcaption{margin-top:6px;font-size:.85rem;color:#5a675f}
-.shots{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
-.shots figure{flex:1 1 240px;margin:0}
-.note{background:#eef0e6;border-left:3px solid #47624d;padding:10px 12px;border-radius:4px;margin-top:14px;font-size:.92rem}
-.links{margin-top:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:.95rem}
-.links a{color:#9ff0a8;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.activate-btn:focus-visible{outline:2px solid #245a38;outline-offset:2px}
+.unsupported{display:block;margin:14px 0;padding:10px 12px;background:#fff8e9;border:1px solid #ebd6aa;border-radius:6px;font-size:.92rem;color:#624511}
+code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.9em;background:#eef0ec;border:1px solid #dfe4dc;padding:1px 5px;border-radius:4px;color:#202722}
+figure{margin:14px 0 0}
+figure img{display:block;width:100%;height:auto;border-radius:6px;border:1px solid #d8ddd5;background:#f4f5f2}
+figcaption{margin-top:7px;font-size:.84rem;color:#68736c}
+.shots{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.details{background:#f5f6f2}
+.details h2{font-size:.98rem}
+.links{margin-top:20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:.95rem}
+.links a{color:#245a38;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
 .links a:hover{text-decoration:underline}
 .links svg{width:18px;height:18px;fill:currentColor}
-.copy{margin-top:10px;font-size:.85rem;color:#7a877d}
-.copy a{color:#9ff0a8}
-@media(max-width:620px){body{padding:14px}}
+.copy{margin-top:10px;font-size:.85rem;color:#68736c}
+.copy a{color:#245a38}
+@media(max-width:780px){body{padding:22px 14px 32px}.layout{display:block}.shots{grid-template-columns:1fr}h1{font-size:1.55rem}}
 </style>
 </head>
 <body>
 <main>
+<header>
 <h1>tinyblok installer</h1>
-<p><strong>tinyblok</strong> runs a message-conditioning <em>patchbay</em> on ESP32 boards and publishes conditioned sensor streams to NATS. It is the miniature counterpart to <a href="https://github.com/lexvicacom/monoblok" target="_blank" rel="noopener">monoblok</a>. For background, see the <a href="https://alexjreid.dev/posts/tinyblok/" target="_blank" rel="noopener"><strong>tinyblok</strong> intro blog post</a>.</p>
+<p>This page lets you flash prebuilt <strong>tinyblok</strong> firmware to an ESP32-C6 from the browser. The firmware runs a message-conditioning patchbay on the board and publishes conditioned sensor streams to NATS. For background, see the <a href="https://alexjreid.dev/posts/tinyblok/" target="_blank" rel="noopener">intro blog post</a>.</p>
+</header>
 
-<div class="panel">
-<h2>Flash</h2>
-<p>Use a Chromium-based browser (Chrome or Edge). Plug in an ESP32-C6 board over USB, then:</p>
-<div class="note">If your board has an OLED display attached, make sure it's wired to <strong>SDA GPIO14</strong> and <strong>SCL GPIO15</strong> before flashing (the firmware defaults; to change them you'll need to build from source and adjust via menuconfig).</div>
+<div class="layout">
+<section class="panel primary-panel">
+<h2>Install tinyblok</h2>
+<p>Use Chrome or Edge on desktop. Connect an ESP32-C6 board over USB, then start the installer.</p>
 <esp-web-install-button manifest="manifest.json">
   <button slot="activate" class="activate-btn">Start install</button>
   <span slot="unsupported" class="unsupported">If you do not see a <strong>Start install</strong> button, your browser is not supported. Use Chrome or Edge on desktop.</span>
@@ -70,26 +75,31 @@ figcaption{margin-top:6px;font-size:.85rem;color:#5a675f}
 </figure>
 <figure>
 <img src="install.png" alt="esp-web-tools dialog with Install tinyblok option">
-<figcaption>Choose <em>Install tinyblok</em></figcaption>
+<figcaption>Choose the install option</figcaption>
 </figure>
 </div>
-<p>If you'd rather build from source and flash it yourself, see the <a href="https://github.com/lexvicacom/tinyblok" target="_blank" rel="noopener"><strong>tinyblok</strong> repo</a>.</p>
+<br>
+<p>If you'd rather build from source and flash it yourself, see the <a href="https://github.com/lexvicacom/tinyblok" target="_blank" rel="noopener"><strong>tinyblok</strong> repo</a>. You will need <a href="https://github.com/espressif/esp-idf">esp-idf</a></p>
+</section>
+
+<aside class="panel details">
+<p>If your board has an OLED display attached, wire it to <strong>SDA GPIO14</strong> and <strong>SCL GPIO15</strong> before flashing. Those are the firmware defaults. To change them, build from source and adjust the settings with menuconfig.</p>
+</aside>
 </div>
 
-<div class="panel">
+<section class="panel">
 <h2>Set up Wi-Fi and NATS</h2>
-<p>After flashing, the device boots into a captive setup portal. No serial console or pre-baked credentials are needed.</p>
+<p>After flashing, the device boots into setup mode. It exposes a wireless access point with a captive setup page.</p>
 <ol>
 <li>Join the <code>TINYBLOK</code> Wi-Fi network advertised by the device.</li>
 <li>The captive portal should open automatically.</li>
-<li>Enter Wi-Fi, device name, and NATS settings, then save.</li>
-<li><strong>tinyblok</strong> joins your Wi-Fi and reboots. Once set up, visit <code>http://tinyblok.local</code> (or <code>http://&lt;device-name&gt;.local</code> if you changed it) to change settings or factory reset.</li>
+<li>Enter your Wi-Fi, device name, and NATS settings, then save.</li>
+<li><strong>tinyblok</strong> joins your Wi-Fi and reboots. If you have a screen attached, you will be able to see what is going on. Alternatively do a `nats sub 'tinyblok.>` on the target NATS server. Once set up, visit <code>http://tinyblok.local</code> (or <code>http://&lt;device-name&gt;.local</code> if you changed it) to update settings or do a factory reset.</li>
 </ol>
 <figure>
 <img src="captive.png" alt="Tinyblok captive setup portal">
-<figcaption>The setup portal</figcaption>
 </figure>
-</div>
+</section>
 
 <div class="links">
 <a href="https://github.com/lexvicacom/tinyblok" target="_blank" rel="noopener" aria-label="tinyblok on GitHub">
