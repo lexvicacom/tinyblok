@@ -4,37 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>tinyblok setup</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{font-family:"Inter",-apple-system,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;font-size:15px;letter-spacing:-0.005em;color:#17201a;background:#101813;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;font-size:15px;color:#1d2420;background:#f7f7f3;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;min-height:100vh;display:grid;place-items:start center;padding:22px;background-image:linear-gradient(rgba(98,141,106,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(98,141,106,.13) 1px,transparent 1px);background-size:28px 28px;color:#e8efe7}
-.wrap{width:min(760px,100%)}h1{font-size:1.55rem;margin:0 0 8px;letter-spacing:0;color:#9ff0a8}
-p{color:#c3d0c0;line-height:1.55}.grid{display:grid;gap:12px;background:#f6f4ea;color:#17201a;border:1px solid #47624d;border-radius:8px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.35)}
-label{display:grid;gap:5px;font-weight:650}
-input,select,button{font:inherit;font-weight:400;border:1px solid #aeb8ad;border-radius:6px;padding:11px;background:#fffef8;color:#17201a}
-button{font-weight:700}
-input:focus,select:focus{outline:2px solid #76c96e;border-color:#27663a}
-input[type=checkbox]{width:22px;height:22px}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+body{margin:0;min-height:100vh;padding:32px 20px 42px;background:#f7f7f3}
+main{width:min(760px,100%);margin:0 auto;color:#1d2420}
+header{max-width:720px;margin:0 0 24px}
+h1{margin:0 0 10px;color:#111814;font-size:1.85rem;line-height:1.15;font-weight:700}
+h2{margin:0 0 12px;font-size:1.05rem;line-height:1.25;color:#111814}
+p,li{color:#48524c;line-height:1.58}
+p{margin:0 0 14px}
+a{color:#245a38;text-underline-offset:3px}
+.panel{background:#fff;color:#1d2420;border:1px solid #d8ddd5;border-radius:8px;padding:20px;margin-bottom:18px}
+.primary-panel{border-color:#bfcabc}
+.grid{display:grid;gap:12px}
+label{display:grid;gap:5px;font-weight:650;color:#1d2420}
+input,select,button{font:inherit;font-weight:400;border:1px solid #d8ddd5;border-radius:6px;padding:10px 11px;background:#fff;color:#1d2420}
+input:focus,select:focus{outline:2px solid #245a38;outline-offset:1px;border-color:#245a38}
+input[type=checkbox]{width:20px;height:20px;accent-color:#245a38}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .ssidrow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end}
-.check{display:flex;align-items:center;gap:10px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
-button{background:#3b443e;color:#f4f7f2;border-color:#3b443e;font-weight:700}.secondary{background:#4a514c;border-color:#4a514c}.danger{background:#5a504d;border-color:#5a504d}
-.msg{min-height:1.5em;margin:12px 0;font-weight:650}.err{color:#ffb0a3}.ok{color:#9ff0a8}
-a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
-.hint{margin:0;color:#526258;font-size:.92rem}
-.subhint{font-weight:400;color:#526258;font-size:.9rem}
-@media(max-width:620px){.row,.ssidrow{grid-template-columns:1fr}body{padding:14px}}
+.check{display:flex;align-items:center;gap:10px;font-weight:650}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+button{font-weight:650;font-size:.96rem;color:#fff;background:#245a38;border:1px solid #1d4b2f;border-radius:6px;padding:10px 15px;cursor:pointer;transition:background .12s ease,transform .04s ease}
+button:hover{background:#1d4b2f}
+button:active{transform:translateY(1px)}
+button:focus-visible{outline:2px solid #245a38;outline-offset:2px}
+.secondary{background:#eef0ec;color:#1d2420;border-color:#d8ddd5}
+.secondary:hover{background:#e3e7df}
+.danger{background:#fff;color:#9a2a1f;border-color:#e6c8c2}
+.danger:hover{background:#fbeae6}
+.msg{min-height:1.5em;margin:0 0 14px;font-weight:650}
+.err{color:#9a2a1f}
+.ok{color:#245a38}
+code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.9em;background:#eef0ec;border:1px solid #dfe4dc;padding:1px 5px;border-radius:4px;color:#202722}
+.hint{margin:0;color:#68736c;font-size:.92rem}
+.subhint{font-weight:400;color:#68736c;font-size:.88rem}
+.links{margin-top:20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:.95rem}
+.links a{color:#245a38;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.links a:hover{text-decoration:underline}
+.links svg{width:18px;height:18px;fill:currentColor}
+.copy{margin-top:10px;font-size:.85rem;color:#68736c}
+.copy a{color:#245a38}
+@media(max-width:620px){body{padding:22px 14px 32px}.row,.ssidrow{grid-template-columns:1fr}h1{font-size:1.55rem}}
 </style>
 </head>
 <body>
-<main class="wrap">
+<main>
+<header>
 <h1>tinyblok setup</h1>
-<p>Enter the Wi-Fi and NATS details for this device, then press save to connect.</p>
+<p>Enter the Wi-Fi and NATS details for this device, then press <b>Save and connect</b>.</p>
+</header>
 <div id="msg" class="msg"></div>
-<form id="f" class="grid" method="post" action="/api/settings" enctype="multipart/form-data">
+<form id="f" class="panel primary-panel grid" method="post" action="/api/settings" enctype="multipart/form-data">
 <div class="ssidrow">
 <label>Wi-Fi SSID<input name="wifi_ssid" list="wifi_networks" maxlength="63" required></label>
 <button class="secondary" type="button" id="scan">Scan</button>
@@ -42,7 +65,7 @@ a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 <datalist id="wifi_networks"></datalist>
 <label>Wi-Fi password<input name="wifi_password" type="password" maxlength="127" autocomplete="current-password"><span id="wifipwhint" class="subhint" hidden>Leave blank to keep saved password.</span></label>
 <label>Device name<input name="device_name" maxlength="63" value="tinyblok" required></label>
-<p class="hint">After setup, open settings at http://device-name.local, for example http://tinyblok.local.</p>
+<p class="hint">After setup, you can change these values from: <code id="devurl">http://tinyblok.local</code></p>
 <div class="row">
 <label>NATS host<input name="nats_host" maxlength="127" value="demo.rtd.pub" required></label>
 <label>NATS port<input name="nats_port" type="number" min="1" max="65535" value="4222" required></label>
@@ -59,13 +82,16 @@ a{color:#9ff0a8}.repo{margin-top:14px;font-size:.95rem}
 <label id="credsrow" hidden>NATS .creds file<input name="nats_creds_file" type="file" accept=".creds,text/plain"></label>
 <div class="actions"><button>Save and connect</button><button class="danger" type="button" id="reset">Factory reset</button></div>
 </form>
+<p class="copy">&copy; 2026 Alex Reid / <a href="https://lexvica.com" target="_blank" rel="noopener">Lexvica Limited</a>. <strong>tinyblok</strong> is MIT licensed. <a href="mailto:alex@lexvica.com">alex@lexvica.com</a></p>
 </main>
 <script>
 const $=s=>document.querySelector(s),msg=$('#msg'),form=$('#f');
 function show(t,c){msg.textContent=t||'';msg.className='msg '+(c||'')}
 function authChanged(){let a=form.elements.nats_auth.value,creds=a==='creds';form.elements.nats_tls.checked=creds||form.elements.nats_tls.checked;form.elements.nats_tls.disabled=creds;$('#userpassrow').hidden=a!=='userpass';$('#tokenrow').hidden=a!=='token';$('#credsrow').hidden=!creds}
-async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();let co=$('#credsopt');if(!j.nats_creds_supported){co.disabled=true;co.textContent='.creds file (not in firmware)';if(j.nats_auth==='creds')j.nats_auth='none'}$('#wifipwhint').hidden=!j.configured;for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();if(st.last_error)show(st.last_error,'err')}
+function devUrlUpdate(){let n=(form.elements.device_name.value||'tinyblok').trim()||'tinyblok';$('#devurl').textContent='http://'+n+'.local'}
+async function load(){let [s,r]=await Promise.all([fetch('/api/settings'),fetch('/api/status')]);let j=await s.json(),st=await r.json();let co=$('#credsopt');if(!j.nats_creds_supported){co.disabled=true;co.textContent='.creds file (not in firmware)';if(j.nats_auth==='creds')j.nats_auth='none'}$('#wifipwhint').hidden=!j.configured;for(const [k,v] of Object.entries(j)){let e=form.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=(v==null?'':v)}authChanged();devUrlUpdate();if(st.last_error)show(st.last_error,'err')}
 form.onchange=e=>{if(e.target.name==='nats_auth')authChanged()};
+form.elements.device_name.addEventListener('input',devUrlUpdate);
 async function scanWifi(){show('Scanning Wi-Fi...');let r=await fetch('/api/wifi-scan');let j=await r.json();if(!r.ok)throw Error(j.error||'scan failed');let dl=$('#wifi_networks');dl.textContent='';for(const n of j.networks||[]){let o=document.createElement('option');o.value=n.ssid;o.label=`${n.rssi} dBm ${n.auth}`;dl.appendChild(o)}show((j.networks&&j.networks.length)?'Select a network or type one.':'No networks found','ok')}
 $('#scan').onclick=()=>scanWifi().catch(e=>show(String(e).replace(/^Error: /,''),'err'));
 async function pollResult(){for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,1000));try{let r=await fetch('/api/status',{cache:'no-store'}),j=await r.json();if(j.last_error){show(j.last_error,'err');return true}}catch(e){}}return false}
