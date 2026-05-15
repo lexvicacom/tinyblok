@@ -1,11 +1,11 @@
 ;; tinyblok.* — C6 board test
 
-;; Each (pump ...) registers a compiled C/Zig symbol as a timed source. Each
-;; (fn ...) registers a compiled C/Zig symbol callable from rules or (on-req).
+;; Each (pump ...) registers a compiled C symbol as a timed source. Each
+;; (fn ...) registers a compiled C symbol callable from rules or (on-req).
 ;; Each (on-req ...) registers a NATS request subject and runs patchbay code.
 ;;
-;; Put user-owned implementations in main/c/user.c or main/zig/user.zig, then
-;; name the exported symbol in :from.
+;; Put user-owned implementations in main/c/user.c, add them to the native
+;; symbol table in main/c/tinyblok_patchbay.c, then name the C symbol in :from.
 
 (pump "tinyblok.heap"   :from tinyblok_free_heap    :type u32      :hz 10)
 (pump "tinyblok.rssi"   :from tinyblok_wifi_rssi    :type i32      :hz 10)
@@ -13,7 +13,7 @@
 (pump "tinyblok.temp"   :from tinyblok_read_temp_c  :type f32      :hz 1)
 
 (fn hello-c   :from tinyblok_hello_c   :input bytes :type bytes)
-(fn hello-zig :from tinyblok_hello_zig :input bytes :type bytes)
+(fn hello-c17 :from tinyblok_hello_c17 :input bytes :type bytes)
 
 ;; --- heap: dedupe + 1 s rolling avg, alert on low ---
 ;; :reentrant lets the deduped value re-enter rule eval so the alert below
@@ -130,11 +130,11 @@
   (reply! "pong"))
 
 (on-req "tinyblok.req.uptime"
-  (-> uptime-s ; the fn to call, c or zig
+  (-> uptime-s ; built-in C helper
       (reply!)))
 
 (on-req "tinyblok.req.hello-c"
   (reply! (hello-c payload)))
 
-(on-req "tinyblok.req.hello-zig"
-  (reply! (hello-zig payload)))
+(on-req "tinyblok.req.hello-c17"
+  (reply! (hello-c17 payload)))

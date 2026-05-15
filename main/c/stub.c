@@ -10,10 +10,9 @@
 #include "app_events.h"
 #include "display.h"
 #include "tinyblok_config.h"
+#include "tinyblok_patchbay.h"
 #include "tinyblok_web.h"
 #include "tinyblok_wifi.h"
-
-extern void zig_main(void);
 
 extern int tinyblok_nats_connect(void);
 extern void tinyblok_drivers_start(void);
@@ -85,6 +84,11 @@ void app_main(void)
         ESP_LOGW(TAG, "LAN web server failed: %s", esp_err_to_name(err));
 
     tinyblok_sources_init();
+    if (tinyblok_patchbay_init() != 0)
+    {
+        ESP_LOGE(TAG, "patchbay init failed");
+        abort();
+    }
     tinyblok_drivers_start();
 
     if (tinyblok_nats_connect() != 0)
@@ -92,5 +96,5 @@ void app_main(void)
         ESP_LOGE(TAG, "nats connect failed; continuing without broker");
     }
 
-    zig_main();
+    tinyblok_patchbay_main();
 }

@@ -1,5 +1,5 @@
-// Pump data sources. Each function here is named in patchbay.edn as a
-// `:from` symbol and called from a generated pump in rules.zig.
+// Pump data sources. Each function here may be named by `:from` in
+// patchbay.edn and called by the C patchbay runtime.
 
 #include <stdint.h>
 #include <stddef.h>

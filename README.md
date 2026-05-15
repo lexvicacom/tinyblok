@@ -91,10 +91,9 @@ make erase-flash-monitor
 
 ## Patchbay Lite
 
-Tinyblok is a firmware-sized patchbay for telemetry. Rules are compiled ahead
-of time into deterministic Zig, run with fixed state, read local sensor pumps,
-derive new subjects, answer fixed request/reply subjects, and publish the
-results to NATS without allocating.
+Tinyblok is a firmware-sized patchbay for telemetry. It embeds a C patchbay
+parser/evaluator derived from monoblok, reads local sensor pumps, derives new
+subjects, answers fixed request/reply subjects, and publishes results to NATS.
 
 It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
 loading, dynamic graph edits, JSON/event document processing, inbound bridges,
@@ -102,39 +101,15 @@ and fleet-management features are outside the current scope.
 
 ### What's there and not there
 
-Tinyblok intentionally implements a static, numeric subset of monoblok's
-patchbay. Supported forms include `when`, `->`, comparisons, arithmetic
-pipeline ops (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `sign`),
-`deadband`, `squelch`, `changed?`, `delta`, `moving-*`, `round`,
-`quantize`, `clamp`, `throttle`, `hold-off`, edge gates, `publish!`,
-`count!`, `bar!`, `sample!`, `debounce!`, `on-req`, and `reply!`.
-
-Not yet supported in Tinyblok: `if`, `do`, `transition`, `on-silence`,
-`aggregate!`, JSON forms, string/subject builders beyond publish-target
-`subject-append`, `rate`, `percentile`, `median`, `stddev`, `variance`,
-`lvc`, and `bridge`.
-
-> This does not mean never - some are trivial, some make no sense to even bother with (bridge, for instance is implicit). Others are tricky due to static code gen.
+Tinyblok uses monoblok's C parser/evaluator for normal `(on ...)` rules, with a
+small Tinyblok layer for `(pump ...)`, `(fn ...)`, `(on-req ...)`, and `reply!`.
+Top-level `lvc` and `bridge` forms are parsed by the vendored core but are not
+wired into firmware policy.
 
 ### Soundcheck
 
-Running `make soundcheck` builds a native host CLI from the generated patchbay
-at `./soundcheck`. It reads newline-delimited `SUBJECT|payload` messages on
-stdin and writes emitted messages to stdout in the same shape. Top-level inputs
-are passed through first, followed by any patchbay emits:
-
-```sh
-printf 'tinyblok.temp|31\n' | ./soundcheck
-printf 'tinyblok.temp|31\n' | ./soundcheck --label
-printf 'tinyblok.rssi|-80\n' | ./soundcheck --label --linger-ms 1200
-```
-
-When stdin reaches EOF, `soundcheck` keeps pending timers alive for up to 10 s
-by default, so `sample!`, `debounce!`, and wall-clock `bar!` rules can still
-fire after piped input closes. Use `--linger-ms N` to change that window, or
-`--linger-ms 0` to exit immediately after EOF.
-
-See [guide.md](./guide.md) for the standalone `soundcheck` guide.
+Running `make soundcheck` builds a host C validator and checks
+[patchbay.edn](./patchbay.edn) with the vendored parser/evaluator.
 
 ## Drivers
 
@@ -144,33 +119,28 @@ A driver is just a function named from [patchbay.edn](./patchbay.edn):
 (pump "tinyblok.temp" :from tinyblok_read_temp_c :type f32 :hz 1)
 ```
 
-After you add the implementation and the [patchbay.edn](./patchbay.edn) declaration, there is no other pump registration step. Codegen declares the function for Zig and adds it to the generated pump table consumed by C. [main/c/drivers.c](./main/c/drivers.c) arms one `esp_timer` per pump, posts onto `esp_event`, then calls back into Zig.
+After you add the implementation, add the C symbol to the native symbol table in
+[main/c/tinyblok_patchbay.c](./main/c/tinyblok_patchbay.c), then declare it in
+[patchbay.edn](./patchbay.edn). [main/c/drivers.c](./main/c/drivers.c) arms one
+`esp_timer` per parsed pump and posts onto `esp_event`.
 
-Put small user-owned implementations in one of the files already wired into the build:
-
-- C/ESP-IDF-facing code: [main/c/user.c](./main/c/user.c)
-- dependency-free Zig code: [main/zig/user.zig](./main/zig/user.zig)
-
-Shared dependency-free byte helpers live in
-[main/zig/bytes.zig](./main/zig/bytes.zig). Keep ESP-IDF-heavy code in C; keep
-`main/zig/user.zig` for bounded helpers that do not need IDF APIs.
+Put small user-owned implementations in [main/c/user.c](./main/c/user.c), or in
+another C file already listed by [main/CMakeLists.txt](./main/CMakeLists.txt).
 
 Then reference the exported symbol from [patchbay.edn](./patchbay.edn). There
 is no separate runtime registry; `(pump ...)` registers a timed source,
-`(fn ...)` registers a callable C/Zig function, and `(on-req ...)` registers a
-NATS request subject. `make gen` turns those declarations into formatted
-generated Zig `extern fn` declarations and call sites in
-[main/zig/rules.zig](./main/zig/rules.zig); you do not hand-write the externs.
-The linker checks that every named C/Zig symbol exists.
+`(fn ...)` registers a callable C function, and `(on-req ...)` registers a
+NATS request subject. The Tinyblok native symbol table is intentionally
+explicit because C has no reflection over linked function names.
 
 Pump source shapes are zero-argument reads:
 
-| `:type` | C shape | Zig shape |
-| --- | --- | --- |
-| `u32` | `uint32_t name(void)` | `export fn name() callconv(.c) u32` |
-| `i32` | `int name(void)` | `export fn name() callconv(.c) c_int` |
-| `f32` | `float name(void)` | `export fn name() callconv(.c) f32` |
-| `u64` / `uptime-s` | `uint64_t name(void)` | `export fn name() callconv(.c) u64` |
+| `:type` | C shape |
+| --- | --- |
+| `u32` | `uint32_t name(void)` |
+| `i32` | `int name(void)` |
+| `f32` | `float name(void)` |
+| `u64` / `uptime-s` | `uint64_t name(void)` |
 
 Request handlers can also call registered functions:
 
@@ -182,8 +152,7 @@ Request handlers can also call registered functions:
 ```
 
 An `on-req` handler is patchbay code, not another compiled symbol. Declare any
-C/Zig helper it needs with `(fn ...)`, then call that DSL name inside the
-handler.
+C helper it needs with `(fn ...)`, then call that DSL name inside the handler.
 
 Registered function `:type` describes the return value. Optional `:input`
 describes whether the function receives the current threaded value or request
@@ -197,17 +166,8 @@ Function shapes:
 | `:type u32` / `i32` / `f32` / `uptime-s` | zero-arg numeric read | numeric value |
 | `:input u32` / `i32` / `f32`, scalar `:type` | threaded scalar transform | `(-> payload-float (name) ...)` |
 
-For byte functions, codegen passes `payload_ptr`, `payload_len`, `out_ptr`, and
-`out_len`; the function returns the number of reply bytes written. For scalar
-input functions, codegen converts the current threaded `f64` into the declared
-input type and formats the scalar return value.
-
-For example, [patchbay.edn](./patchbay.edn) declares `hello-zig` with
-`:from tinyblok_hello_zig`, and [main/zig/user.zig](./main/zig/user.zig)
-exports that exact symbol. [main/zig/main.zig](./main/zig/main.zig) imports
-`user.zig` so the firmware static library includes the export;
-[main/zig/soundcheck.zig](./main/zig/soundcheck.zig) does the same for the host
-CLI.
+For byte functions, the runtime passes `payload_ptr`, `payload_len`, `out_ptr`,
+and `out_len`; the function returns the number of reply bytes written.
 
 ## Request/reply
 
@@ -250,26 +210,31 @@ From a NATS client:
 nats req tinyblok.req.ping ''
 nats req tinyblok.req.uptime ''
 nats req tinyblok.req.hello-c tinyhi
-nats req tinyblok.req.hello-zig tinyhi
+nats req tinyblok.req.hello-c17 tinyhi
 ```
 
 <img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
 
 ### How it fits together
 
-[tools/gen.py](./tools/gen.py) compiles [patchbay.edn](./patchbay.edn) into [main/zig/rules.zig](./main/zig/rules.zig), then runs `zig fmt` on the generated file. The generated Zig is straight-line rule code with static state slots, which is much friendlier to a microcontroller than walking an s-expression tree at runtime.
-
-The reusable ops live in [main/zig/kernel.zig](./main/zig/kernel.zig). That file is vendored from monoblok and should stay byte-identical; use `make sync-kernel` or `make sync-kernel-remote` when it changes upstream.
+`patchbay.edn` is embedded into the firmware image by CMake and parsed once at
+boot. The parsed tree is arena-owned; long-lived rule state is held by
+`pb_eval_state`.
 
 ## TX ring
 
-[main/zig/tx_ring.zig](./main/zig/tx_ring.zig) sits between rule eval and the NATS socket. `publish!` queues a subject/payload record; [main/zig/main.zig](./main/zig/main.zig) drains it through [main/c/nats.c](./main/c/nats.c). If Wi-Fi or the broker stalls, the ring drops the oldest samples rather than blocking rule evaluation.
+[main/c/tinyblok_tx_ring.c](./main/c/tinyblok_tx_ring.c) sits between rule eval
+and the NATS socket. `publish!` queues a subject/payload record; the C main loop
+drains it through [main/c/nats.c](./main/c/nats.c). If Wi-Fi or the broker
+stalls, the ring drops the oldest samples rather than blocking rule evaluation.
 
-## Why C and Zig
+## Why C
 
-[main/c/stub.c](./main/c/stub.c), [main/c/nats.c](./main/c/nats.c), [main/c/drivers.c](./main/c/drivers.c), and [main/c/sources.c](./main/c/sources.c) own the ESP-IDF surface: Wi-Fi, NVS, sockets, TLS, timers, events, and sensors. Zig owns the portable patchbay path: generated rules, op kernels, and the publish queue.
-
-That split keeps IDF macros out of `@cImport` and keeps the Zig side small enough to host-test with `make test`. The host test path runs the vendored kernel test directly and runs `soundcheck-test`, which also exercises imported modules such as the TX ring.
+[main/c/stub.c](./main/c/stub.c), [main/c/nats.c](./main/c/nats.c),
+[main/c/drivers.c](./main/c/drivers.c), [main/c/sources.c](./main/c/sources.c),
+and [main/c/patchbay](./main/c/patchbay) keep the firmware in one C17-friendly
+language boundary. The host test path builds the same patchbay C files used by
+firmware.
 
 ## make commands
 
@@ -298,11 +263,10 @@ broker. It starts `nats-server` on `127.0.0.1:4223`, verifies request/reply on
 `tinyblok.req.ping`, then verifies a five-message publish batch on
 `tinyblok.host.pub`.
 
-It needs `nats-server`, the `nats` CLI, and `zig cc` in `PATH`. Override the
+It needs `nats-server`, the `nats` CLI, and `cc` in `PATH`. Override the
 test broker port with `NATS_HOST_PORT` if `4223` is already in use:
 
 ```sh
 make nats-host-smoke
 make nats-host-smoke NATS_HOST_PORT=4224
 ```
-

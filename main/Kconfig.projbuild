@@ -100,6 +100,14 @@ menu "tinyblok"
         default 1000
         range 100 86400000
 
+    config TINYBLOK_PATCHBAY_JSON
+        bool "Enable JSON patchbay forms"
+        default n
+        help
+            Compile in JSON patchbay file parsing and json-get/json-demux!
+            builtins. This pulls in yyjson and is disabled by default for
+            firmware size.
+
     config TINYBLOK_TIMEZONE
         string "Default timezone"
         default "UTC"

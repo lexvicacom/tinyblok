@@ -24,6 +24,6 @@ patchbay.edn:
 
 (pump "tinyblok.user.counter" :from tinyblok_user_counter :type u32 :hz 1)
 
-For request handlers, add an (fn ...) declaration for the compiled symbol,
-then call it from (on-req ...).
+For request handlers, add the compiled symbol to tinyblok_patchbay.c's native
+symbol table, add an (fn ...) declaration here, then call it from (on-req ...).
 */

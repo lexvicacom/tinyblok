@@ -23,6 +23,8 @@
 #define CONFIG_TINYBLOK_NATS_CREDS_SUPPORT 0
 #endif
 #include "app_events.h"
+#include "tinyblok_patchbay.h"
+#include "tinyblok_tx_ring.h"
 #ifdef ESP_PLATFORM
 #include "tinyblok_config.h"
 #endif
@@ -41,22 +43,6 @@
 #endif
 
 static const char *TAG = "nats";
-
-// Implemented in tx_ring.zig.
-extern size_t tinyblok_tx_ring_used(void);
-extern size_t tinyblok_tx_ring_count(void);
-extern void tinyblok_tx_ring_reset_in_flight(void);
-
-typedef struct
-{
-    const char *subject;
-} tinyblok_request_sub_t;
-
-extern const size_t tinyblok_request_sub_count;
-extern const tinyblok_request_sub_t tinyblok_request_subs[];
-extern void tinyblok_nats_handle_msg(const unsigned char *subject, size_t subject_len,
-                                     const unsigned char *reply, size_t reply_len,
-                                     const unsigned char *payload, size_t payload_len);
 
 static int sock = -1;
 static int nats_connected = 0;
@@ -457,9 +443,10 @@ static int build_connect_line(const char *info, size_t info_len, char *out, size
 
 static int send_request_subs(void)
 {
-    for (size_t i = 0; i < tinyblok_request_sub_count; i++)
+    const size_t request_count = tinyblok_patchbay_request_count();
+    for (size_t i = 0; i < request_count; i++)
     {
-        const char *subject = tinyblok_request_subs[i].subject;
+        const char *subject = tinyblok_patchbay_request_subject(i);
         char line[NATS_SUBJECT_MAX + 32];
         int n = snprintf(line, sizeof(line), "SUB %s %u\r\n", subject, (unsigned)(i + 1));
         if (n <= 0 || (size_t)n >= sizeof(line))
@@ -810,9 +797,9 @@ void tinyblok_nats_drain_rx(void)
             tinyblok_event_publish_message_processed();
             if (msg.reply_len > 0)
             {
-                tinyblok_nats_handle_msg(msg.subject, msg.subject_len,
-                                         msg.reply, msg.reply_len,
-                                         payload, msg.payload_len);
+                tinyblok_patchbay_handle_msg(msg.subject, msg.subject_len,
+                                             msg.reply, msg.reply_len,
+                                             payload, msg.payload_len);
                 if (!NET_OPEN())
                     return;
             }

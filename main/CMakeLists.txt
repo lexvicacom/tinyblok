@@ -3,29 +3,33 @@
 # applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
     SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c" "c/app_events.c" "c/display.c"
-         "c/tinyblok_config.c" "c/tinyblok_wifi.c" "c/tinyblok_web.c"
-    INCLUDE_DIRS "c"
+         "c/tinyblok_config.c" "c/tinyblok_wifi.c" "c/tinyblok_web.c" "c/tinyblok_patchbay.c" "c/tinyblok_tx_ring.c"
+         "c/patchbay/pb_arena.c" "c/patchbay/pb_builtins.c" "c/patchbay/pb_eval.c"
+         "c/patchbay/pb_program.c" "c/patchbay/pb_sexpr.c" "c/patchbay/pb_window_builtins.c"
+    INCLUDE_DIRS "c" "c/patchbay" "c/vendor/yyjson"
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_driver_i2c esp_driver_gpio esp_wifi esp_event esp_netif nvs_flash lwip
                   esp_http_server mdns
 )
 
-# Resolve a python interpreter once at configure time. Override with
-# `cmake -DPython3_EXECUTABLE=/path/to/python` if needed.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
-file(READ ${CMAKE_SOURCE_DIR}/build.zig.zon TINYBLOK_ZON)
-string(REGEX MATCH "\\.version[ \t\r\n]*=[ \t\r\n]*\"([^\"]+)\"" _tinyblok_version_match "${TINYBLOK_ZON}")
-if(CMAKE_MATCH_1)
-    set(TINYBLOK_VERSION "${CMAKE_MATCH_1}")
-else()
+file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION TINYBLOK_VERSION LIMIT_COUNT 1)
+if(NOT TINYBLOK_VERSION)
     set(TINYBLOK_VERSION "dev")
 endif()
-target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYBLOK_VERSION=\"${TINYBLOK_VERSION}\")
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYBLOK TINYBLOK_VERSION=\"${TINYBLOK_VERSION}\")
+
+if(CONFIG_TINYBLOK_PATCHBAY_JSON)
+    target_sources(${COMPONENT_LIB} PRIVATE "c/patchbay/pb_json.c" "c/vendor/yyjson/yyjson.c")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PB_ENABLE_JSON=1)
+    set_source_files_properties(c/vendor/yyjson/yyjson.c PROPERTIES
+        COMPILE_FLAGS "-Wno-error=maybe-uninitialized")
+endif()
 
 set(RSRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rsrc)
 set(GEN_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(SETUP_HTML_HEADER ${GEN_INCLUDE_DIR}/tinyblok_setup_html.h)
 set(CAPTIVE_HTML_HEADER ${GEN_INCLUDE_DIR}/tinyblok_captive_html.h)
+set(PATCHBAY_EDN_HEADER ${GEN_INCLUDE_DIR}/tinyblok_patchbay_edn.h)
 find_program(XXD_EXECUTABLE xxd REQUIRED)
 
 add_custom_command(
@@ -44,11 +48,21 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_target(tinyblok_web_assets DEPENDS ${SETUP_HTML_HEADER} ${CAPTIVE_HTML_HEADER})
+add_custom_command(
+    OUTPUT ${PATCHBAY_EDN_HEADER}
+    COMMAND ${XXD_EXECUTABLE} -i -n tinyblok_patchbay_edn ${CMAKE_SOURCE_DIR}/patchbay.edn ${PATCHBAY_EDN_HEADER}
+    DEPENDS ${CMAKE_SOURCE_DIR}/patchbay.edn
+    COMMENT "Embedding patchbay.edn"
+    VERBATIM
+)
+
+add_custom_target(tinyblok_web_assets DEPENDS ${SETUP_HTML_HEADER} ${CAPTIVE_HTML_HEADER} ${PATCHBAY_EDN_HEADER})
 add_dependencies(${COMPONENT_LIB} tinyblok_web_assets)
 target_include_directories(${COMPONENT_LIB} PRIVATE ${GEN_INCLUDE_DIR})
 set_source_files_properties(c/tinyblok_web.c PROPERTIES
     OBJECT_DEPENDS "${SETUP_HTML_HEADER};${CAPTIVE_HTML_HEADER}")
+set_source_files_properties(c/tinyblok_patchbay.c PROPERTIES
+    OBJECT_DEPENDS "${PATCHBAY_EDN_HEADER}")
 
 if(CONFIG_TINYBLOK_NATS_TLS)
     idf_component_optional_requires(PRIVATE esp-tls mbedtls)
@@ -65,53 +79,3 @@ if(CONFIG_TINYBLOK_NATS_CREDS_SUPPORT)
         COMPILE_FLAGS "-Wno-error=unterminated-string-initialization")
 
 endif()
-
-set(ZIG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/zig/main.zig)
-set(GEN_SCRIPT ${CMAKE_SOURCE_DIR}/tools/gen.py)
-set(PATCHBAY_EDN ${CMAKE_SOURCE_DIR}/patchbay.edn)
-set(GEN_RULES ${CMAKE_CURRENT_SOURCE_DIR}/zig/rules.zig)
-set(ZIG_DEPS
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/main.zig
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/user.zig
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/bytes.zig
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/patchbay.zig
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/kernel.zig
-    ${GEN_RULES}
-    ${CMAKE_CURRENT_SOURCE_DIR}/zig/tx_ring.zig
-)
-set(ZIG_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/zig-out)
-set(ZIG_LIB ${ZIG_OUT_DIR}/libtinyblok.a)
-
-# Match the riscv32 ABI/feature set ESP-IDF's GCC uses for the C6 HP core.
-set(ZIG_TARGET "riscv32-freestanding-none")
-set(ZIG_CPU "generic_rv32+m+a+c+zicsr+zifencei")
-
-# Codegen: regenerate main/zig/rules.zig whenever patchbay.edn or gen.py changes.
-# rules.zig is gitignored; this is the canonical source-of-truth invocation.
-add_custom_command(
-    OUTPUT ${GEN_RULES}
-    COMMAND ${Python3_EXECUTABLE} ${GEN_SCRIPT} ${PATCHBAY_EDN} ${GEN_RULES}
-    DEPENDS ${PATCHBAY_EDN} ${GEN_SCRIPT}
-    COMMENT "Generating rules.zig from patchbay.edn"
-    VERBATIM
-)
-
-add_custom_command(
-    OUTPUT ${ZIG_LIB}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${ZIG_OUT_DIR}
-    COMMAND zig build-lib ${ZIG_SRC}
-            -target ${ZIG_TARGET}
-            -mcpu=${ZIG_CPU}
-            -O ReleaseSmall
-            -fno-stack-check
-            -femit-bin=${ZIG_LIB}
-            --name tinyblok
-    DEPENDS ${ZIG_DEPS}
-    WORKING_DIRECTORY ${ZIG_OUT_DIR}
-    COMMENT "Building Zig static library (${ZIG_TARGET}, ${ZIG_CPU})"
-    VERBATIM
-)
-
-add_custom_target(zig_lib DEPENDS ${ZIG_LIB})
-add_dependencies(${COMPONENT_LIB} zig_lib)
-target_link_libraries(${COMPONENT_LIB} PRIVATE ${ZIG_LIB})

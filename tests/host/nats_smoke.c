@@ -6,16 +6,6 @@
 
 #include "app_events.h"
 
-typedef struct
-{
-    const char *subject;
-} tinyblok_request_sub_t;
-
-const size_t tinyblok_request_sub_count = 1;
-const tinyblok_request_sub_t tinyblok_request_subs[] = {
-    {.subject = "tinyblok.req.ping"},
-};
-
 static size_t handle_msg_count = 0;
 static size_t reset_in_flight_count = 0;
 
@@ -48,9 +38,19 @@ void tinyblok_tx_ring_reset_in_flight(void)
     reset_in_flight_count++;
 }
 
-void tinyblok_nats_handle_msg(const unsigned char *subject, size_t subject_len,
-                              const unsigned char *reply, size_t reply_len,
-                              const unsigned char *payload, size_t payload_len)
+size_t tinyblok_patchbay_request_count(void)
+{
+    return 1;
+}
+
+const char *tinyblok_patchbay_request_subject(size_t index)
+{
+    return index == 0 ? "tinyblok.req.ping" : NULL;
+}
+
+void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_len,
+                                  const unsigned char *reply, size_t reply_len,
+                                  const unsigned char *payload, size_t payload_len)
 {
     handle_msg_count++;
     if (subject_len == strlen("tinyblok.req.ping") &&
