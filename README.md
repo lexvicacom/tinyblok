@@ -109,6 +109,10 @@ small Tinyblok layer for `(pump ...)`, `(fn ...)`, `(on-req ...)`, and `reply!`.
 Top-level `lvc` and `bridge` forms are parsed by the vendored core but are not
 wired into firmware policy.
 
+When using a coding assistant to author or edit patchbay rules, include the
+monoblok patchbay agent guidance from
+[lexvicacom/monoblok/docs/AGENTS_PATCHBAY.md](https://github.com/lexvicacom/monoblok/blob/main/docs/AGENTS_PATCHBAY.md).
+
 ### Soundcheck
 
 Running `make soundcheck` builds a host C validator and checks
@@ -187,7 +191,8 @@ parsing and function-backed replies.
 
 This is useful for small control-plane actions that should not be continuous
 telemetry: pinging a device, reading uptime, asking it to reload published
-metadata, starting a sensor sweep, or triggering a one-shot diagnostic sample.
+metadata, starting a sensor sweep, triggering an actuator or relay on a board,
+or triggering a one-shot diagnostic sample.
 It also works naturally for fleet queries. If many devices subscribe to the
 same request subject, one `nats req`-style request is effectively a broadcast:
 each device receives the same request and replies to the requester's inbox.
@@ -213,7 +218,6 @@ From a NATS client:
 nats req tinyblok.req.ping ''
 nats req tinyblok.req.uptime ''
 nats req tinyblok.req.hello-c tinyhi
-nats req tinyblok.req.hello-c17 tinyhi
 ```
 
 <img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
