@@ -17,3 +17,8 @@ CONFIG_TINYBLOK_NATS_CREDS_SUPPORT=y
 # TweetNaCl signing (creds auth) plus the TLS handshake share the main task
 # stack. Default 3584 bytes overflows during crypto_sign — bump to 8 KB.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Pump and clock patchbay evaluation runs on Tinyblok's own task, not the
+# ESP default event-loop task. Match the main task stack budget.
+CONFIG_TINYBLOK_DRIVER_TASK_STACK_SIZE=8192
+CONFIG_TINYBLOK_DRIVER_EVENT_QUEUE_LEN=32
