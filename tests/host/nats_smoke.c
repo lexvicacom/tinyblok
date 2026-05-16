@@ -45,7 +45,7 @@ size_t tinyblok_patchbay_request_count(void)
 
 const char *tinyblok_patchbay_request_subject(size_t index)
 {
-    return index == 0 ? "tinyblok.req.ping" : NULL;
+    return index == 0 ? "tinyblok.req.echo" : NULL;
 }
 
 void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_len,
@@ -53,11 +53,10 @@ void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_l
                                   const unsigned char *payload, size_t payload_len)
 {
     handle_msg_count++;
-    if (subject_len == strlen("tinyblok.req.ping") &&
-        memcmp(subject, "tinyblok.req.ping", subject_len) == 0 &&
-        payload_len == 0)
+    if (subject_len == strlen("tinyblok.req.echo") &&
+        memcmp(subject, "tinyblok.req.echo", subject_len) == 0)
     {
-        (void)tinyblok_nats_reply(reply, reply_len, (const unsigned char *)"pong", 4);
+        (void)tinyblok_nats_reply(reply, reply_len, payload, payload_len);
     }
 }
 

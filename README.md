@@ -190,9 +190,9 @@ The generated handler dispatches by subject and uses stack buffers for payload
 parsing and function-backed replies.
 
 This is useful for small control-plane actions that should not be continuous
-telemetry: pinging a device, reading uptime, asking it to reload published
-metadata, starting a sensor sweep, triggering an actuator or relay on a board,
-or triggering a one-shot diagnostic sample.
+telemetry: reading uptime, asking a device to reload published metadata,
+starting a sensor sweep, triggering an actuator or relay on a board, or
+triggering a one-shot diagnostic sample.
 It also works naturally for fleet queries. If many devices subscribe to the
 same request subject, one `nats req`-style request is effectively a broadcast:
 each device receives the same request and replies to the requester's inbox.
@@ -200,9 +200,6 @@ Clients that expect fleet replies should wait for multiple responses rather
 than stopping after the first one.
 
 ```clojure
-(on-req "tinyblok.req.ping"
-  (reply! "pong"))
-
 (on-req "tinyblok.req.uptime"
   (-> uptime-s
       (round 3)
@@ -215,12 +212,9 @@ than stopping after the first one.
 From a NATS client:
 
 ```sh
-nats req tinyblok.req.ping ''
 nats req tinyblok.req.uptime ''
 nats req tinyblok.req.hello-c tinyhi
 ```
-
-<img width="1145" height="630" alt="NATS request/reply ping example" src="./docs/pong.png" />
 
 ### How it fits together
 
@@ -280,8 +274,11 @@ commands such as `make test`. Firmware CMake also accepts
 
 `make nats-host-smoke` exercises the host-built C NATS client against a local
 broker. It starts `nats-server` on `127.0.0.1:4223`, verifies request/reply on
-`tinyblok.req.ping`, then verifies a five-message publish batch on
+`tinyblok.req.echo`, then verifies a five-message publish batch on
 `tinyblok.host.pub`.
+
+`make test` also includes a host protocol test for the client-side NATS
+`CONNECT`/`PING`/`PONG` handshake and server-initiated `PING` handling.
 
 It needs `nats-server`, the `nats` CLI, and `cc` in `PATH`. Override the
 test broker port with `NATS_HOST_PORT` if `4223` is already in use:

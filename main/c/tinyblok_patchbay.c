@@ -101,6 +101,7 @@ extern size_t tinyblok_hello_c(const uint8_t *payload, size_t payload_len, uint8
 extern ssize_t tinyblok_nats_try_send(const unsigned char *data, size_t len);
 extern void tinyblok_nats_maintain(void);
 extern void tinyblok_nats_drain_rx(void);
+extern int tinyblok_nats_subject_is_valid(const unsigned char *subject, size_t subject_len);
 extern int tinyblok_nats_reply(const unsigned char *subject, size_t subject_len,
                                const unsigned char *payload, size_t payload_len);
 extern void tinyblok_clock_arm(uint64_t us_until);
@@ -213,6 +214,8 @@ static char *arena_cstr(pb_slice s)
 static void bridge_publish(void *ctx, mb_slice subject, mb_slice payload)
 {
     (void)ctx;
+    if (!tinyblok_nats_subject_is_valid(subject.ptr, subject.len))
+        return;
     (void)tinyblok_tx_ring_enqueue(subject.ptr, subject.len, payload.ptr, payload.len);
 }
 
@@ -289,6 +292,9 @@ static bool load_pump(pb_values items)
         from.kind != PB_SYMBOL || !type_from_value(type, &declared_type) || !number_to_u64(hz, &hz_u64) || hz_u64 == 0)
         return false;
 
+    if (!tinyblok_nats_subject_is_valid((const unsigned char *)items.items[1].text.ptr, items.items[1].text.len))
+        return false;
+
     const native_symbol *sym = find_native(from.text);
     if (sym == NULL)
         return false;
@@ -329,6 +335,8 @@ static bool load_function(pb_values items)
 static bool load_request(pb_values items)
 {
     if (items.len < 3 || s_pb.request_count >= MAX_REQUESTS || items.items[1].kind != PB_STRING)
+        return false;
+    if (!tinyblok_nats_subject_is_valid((const unsigned char *)items.items[1].text.ptr, items.items[1].text.len))
         return false;
     char *subject = arena_cstr(items.items[1].text);
     if (subject == NULL)

@@ -96,7 +96,7 @@ void tinyblok_config_load_defaults(tinyblok_config_t *cfg)
     cfg->nats_port = (uint16_t)CONFIG_TINYBLOK_NATS_PORT;
     (void)set_string(cfg->nats_base_topic, sizeof(cfg->nats_base_topic), CONFIG_TINYBLOK_NATS_BASE_TOPIC);
     (void)set_string(cfg->nats_auth, sizeof(cfg->nats_auth), "none");
-    cfg->nats_tls = CONFIG_TINYBLOK_NATS_TLS != 0;
+    cfg->nats_tls = false;
     cfg->display_enabled = CONFIG_TINYBLOK_DISPLAY_ENABLED_DEFAULT != 0;
     cfg->display_brightness = (uint8_t)CONFIG_TINYBLOK_DISPLAY_BRIGHTNESS_DEFAULT;
     cfg->sample_interval_ms = CONFIG_TINYBLOK_SAMPLE_INTERVAL_MS;

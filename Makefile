@@ -5,6 +5,7 @@ IDF_PY         ?= idf.py
 PORT           ?=
 HOST_CC        ?= cc
 NATS_HOST_PORT ?= 4223
+NATS_PROTOCOL_PORT ?= 4224
 HOST_BUILD_DIR ?= build/host
 MONOBLOK_DIR   ?= third_party/monoblok
 MONOBLOK_SRC_DIR := $(MONOBLOK_DIR)/src
@@ -59,7 +60,7 @@ endif
 
 PORT_ARG := $(if $(strip $(PORT)),-p $(PORT),)
 
-.PHONY: check-idf check-monoblok gen soundcheck build test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
+.PHONY: check-idf check-monoblok gen soundcheck build test nats-protocol-test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
 
 check-idf:
 	@if [ -n "$(IDF_EXPORT)" ]; then \
@@ -95,7 +96,15 @@ soundcheck: check-monoblok
 build: check-idf
 	@$(IDF) build
 
-test: soundcheck
+test: soundcheck nats-protocol-test
+
+nats-protocol-test:
+	@mkdir -p $(HOST_BUILD_DIR)
+	@echo "CC $(HOST_BUILD_DIR)/nats_protocol_test"
+	@$(HOST_CC) -std=c11 -D_GNU_SOURCE -DCONFIG_TINYBLOK_NATS_PORT=$(NATS_PROTOCOL_PORT) \
+		-Itests/host/include -Imain/c tests/host/nats_protocol_test.c main/c/nats.c main/c/app_events.c \
+		-pthread -o $(HOST_BUILD_DIR)/nats_protocol_test
+	@$(HOST_BUILD_DIR)/nats_protocol_test
 
 nats-host-smoke:
 	@command -v nats-server >/dev/null || { echo "error: nats-server not found in PATH" >&2; exit 1; }
@@ -116,8 +125,8 @@ nats-host-smoke:
 	$(HOST_BUILD_DIR)/nats_smoke serve >"$$svc_log" 2>&1 & \
 	svc_pid=$$!; \
 	sleep 0.2; \
-	reply=$$(nats --no-context -s nats://127.0.0.1:$(NATS_HOST_PORT) request --raw --timeout 2s tinyblok.req.ping ""); \
-	test "$$reply" = "pong" || { echo "unexpected nats reply: '$$reply'" >&2; cat "$$svc_log" >&2; exit 1; }; \
+	reply=$$(nats --no-context -s nats://127.0.0.1:$(NATS_HOST_PORT) request --raw --timeout 2s tinyblok.req.echo "smoke"); \
+	test "$$reply" = "smoke" || { echo "unexpected nats reply: '$$reply'" >&2; cat "$$svc_log" >&2; exit 1; }; \
 	for i in 1 2 3 4 5 6 7 8 9 10; do \
 		if ! kill -0 $$svc_pid >/dev/null 2>&1; then \
 			wait $$svc_pid; \
