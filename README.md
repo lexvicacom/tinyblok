@@ -2,6 +2,8 @@
 
 Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, and publishes conditioned sensor streams to NATS. It is the miniature counterpart to [lexvicacom/monoblok](https://github.com/lexvicacom/monoblok) - take a look for more context, or read the [tinyblok intro blog post](https://alexjreid.dev/posts/tinyblok/).
 
+> Flash an ESP32, configure Wi-Fi/NATS in a browser, declare useful telemetry subjects, publish clean values.
+
 ![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
 ## Install
