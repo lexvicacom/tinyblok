@@ -5,13 +5,12 @@ Repository guidance for Codex and other coding agents working in this tree.
 ## Project Shape
 
 Tinyblok is ESP-IDF firmware for ESP32-C6. It is C firmware that embeds a
-monoblok-derived C patchbay parser/evaluator and publishes sensor data to NATS.
+monoblok C patchbay parser/evaluator and publishes sensor data to NATS.
 
 Keep `main/` as the ESP-IDF component root:
 
 - `main/c/` holds firmware C code, the Tinyblok patchbay glue, NATS, Wi-Fi, sockets, TLS, sensors, the TX ring, and vendored TweetNaCl.
-- `main/c/patchbay/` vendors the monoblok C patchbay arena, parser, evaluator, validator, and builtins. Keep it close to upstream.
-- `main/c/vendor/yyjson/` vendors yyjson for JSON patchbay helpers.
+- `third_party/monoblok/` is a git submodule and is the canonical patchbay source. Run `git submodule update --init --recursive` after cloning.
 - `main/CMakeLists.txt` registers C sources and embeds `patchbay.edn` into a generated header.
 
 ## Common Commands
@@ -43,7 +42,7 @@ device such as `PORT=/dev/cu.usbmodem101`.
 - `main/c/tinyblok_patchbay.c`: embeds Tinyblok-specific `(pump ...)`, `(fn ...)`, `(on-req ...)`, and evaluator hooks.
 - `main/c/tinyblok_tx_ring.c`: bounded publish queue drained by the main loop.
 - `main/c/user.c`: user-owned C helpers named from `patchbay.edn`.
-- `main/c/patchbay/*`: vendored monoblok patchbay core. Keep local changes minimal and document Tinyblok compatibility paths.
+- `third_party/monoblok/src/patchbay/*`: canonical monoblok patchbay core. Avoid Tinyblok-specific changes here; put Tinyblok adaptation in `main/c/tinyblok_patchbay.c`.
 
 ## Important Rules
 
@@ -52,7 +51,7 @@ device such as `PORT=/dev/cu.usbmodem101`.
 - New tinyblok compile-time settings belong in `main/Kconfig.projbuild`, not ad hoc C defines.
 - Registered `(fn ...)` declarations use `:type` for return type and optional `:input` for arity/input. Omit `:input` for zero-arg scalar reads; use `:input bytes :type bytes` for request payload transforms; scalar `:input` functions are threaded ops.
 - New compiled symbols named from `patchbay.edn` must be added to `tinyblok_patchbay.c`'s native symbol table.
-- Keep ESP-IDF-heavy code out of `main/c/patchbay/`; the vendored patchbay core should stay host-portable.
+- Keep ESP-IDF-heavy code out of `third_party/monoblok/src/patchbay/`; the patchbay core should stay host-portable.
 
 ## Memory Model
 

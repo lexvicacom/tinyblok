@@ -108,6 +108,9 @@ extern void tinyblok_clock_arm(uint64_t us_until);
 static const char *TAG = "patchbay";
 static patchbay_runtime s_pb;
 
+static bool tinyblok_eval_symbol(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, pb_eval_result *out);
+static bool tinyblok_eval_call(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, pb_values args, pb_eval_result *out);
+
 static size_t tinyblok_hello_c17(const uint8_t *payload, size_t payload_len, uint8_t *out, size_t out_len)
 {
     static const char prefix[] = "hello from c17: ";
@@ -207,10 +210,10 @@ static char *arena_cstr(pb_slice s)
     return out;
 }
 
-static bool enqueue_publish(void *ctx, mb_slice subject, mb_slice payload)
+static void bridge_publish(void *ctx, mb_slice subject, mb_slice payload)
 {
     (void)ctx;
-    return tinyblok_tx_ring_enqueue(subject.ptr, subject.len, payload.ptr, payload.len);
+    (void)tinyblok_tx_ring_enqueue(subject.ptr, subject.len, payload.ptr, payload.len);
 }
 
 static double read_native_number(const native_symbol *sym)
@@ -266,10 +269,10 @@ static bool eval_publish_bytes(pb_slice subject, pb_slice payload)
     const mb_slice mb_subject = {.ptr = (const uint8_t *)subject.ptr, .len = subject.len};
     const mb_slice mb_payload = {.ptr = (const uint8_t *)payload.ptr, .len = payload.len};
 
-    (void)tinyblok_tx_ring_enqueue(mb_subject.ptr, mb_subject.len, mb_payload.ptr, mb_payload.len);
+    const bool published = mb_router_publish(&s_pb.router, mb_subject, mb_payload);
     const bool ok = pb_program_eval_publish(&s_pb.program, &s_pb.router, mb_subject, mb_payload, now_ms, (int64_t)now_ms);
     tinyblok_patchbay_arm_next_clock();
-    return ok;
+    return published && ok;
 }
 
 static bool load_pump(pb_values items)
@@ -366,11 +369,14 @@ static bool load_declarations(void)
 int tinyblok_patchbay_init(void)
 {
     memset(&s_pb, 0, sizeof(s_pb));
-    s_pb.router.publish = enqueue_publish;
+    mb_router_init(&s_pb.router);
+    s_pb.router.bridge_ctx = &s_pb;
+    s_pb.router.bridge_fn = bridge_publish;
     if (!pb_program_load_source(&s_pb.program, "patchbay.edn", (const char *)tinyblok_patchbay_edn, (size_t)tinyblok_patchbay_edn_len))
         return -1;
     if (!load_declarations())
         return -1;
+    pb_program_set_eval_hooks(&s_pb.program, tinyblok_eval_symbol, tinyblok_eval_call, &s_pb);
     ESP_LOGI(TAG, "loaded %u rule(s), %u pump(s), %u request(s)",
              (unsigned)s_pb.program.len, (unsigned)s_pb.pump_count, (unsigned)s_pb.request_count);
     return 0;
@@ -424,8 +430,9 @@ const char *tinyblok_patchbay_request_subject(size_t index)
     return index < s_pb.request_count ? s_pb.requests[index].subject.ptr : NULL;
 }
 
-bool pb_user_eval_symbol(pb_eval_ctx *ctx, pb_slice name, pb_eval_result *out)
+static bool tinyblok_eval_symbol(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, pb_eval_result *out)
 {
+    (void)user_ctx;
     (void)ctx;
     if (slice_eq(name, "uptime-s"))
     {
@@ -444,8 +451,9 @@ bool pb_user_eval_symbol(pb_eval_ctx *ctx, pb_slice name, pb_eval_result *out)
     return true;
 }
 
-bool pb_user_eval_call(pb_eval_ctx *ctx, pb_slice name, pb_values args, pb_eval_result *out)
+static bool tinyblok_eval_call(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, pb_values args, pb_eval_result *out)
 {
+    (void)user_ctx;
     if (slice_eq(name, "reply!") || slice_eq(name, "reply"))
     {
         if (args.len > 1)
@@ -530,6 +538,9 @@ void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_l
             .state = &state,
             .subject = {.ptr = (const char *)subject, .len = subject_len},
             .payload = {.ptr = (const char *)payload, .len = payload_len},
+            .user_symbol = tinyblok_eval_symbol,
+            .user_call = tinyblok_eval_call,
+            .user_ctx = &s_pb,
         };
         const pb_eval_result r = pb_eval(&ctx, req->body);
         if (r.err != PB_EVAL_OK)

@@ -66,7 +66,7 @@
 ;; Throttle uptime to once per minute for dashboards (10 Hz is silly here).
 (on "tinyblok.uptime"
   (-> payload-float
-      (throttle :ms 60000)
+      (throttle :ms 60000 1)
       (round 0)
       (publish! (subject-append "1m"))))
 
@@ -86,11 +86,11 @@
   (when (= payload 42)
     (-> 1 (publish! "alex.alert"))))
 
-;; Verbatim re-publish: bare `publish!` (no `->`) forwards the original
-;; payload bytes unchanged, so ints stay as ints rather than being reformatted
-;; through %.6f. Useful for mirroring a feed to a debug subject.
+;; Verbatim re-publish: explicit `payload` forwards the original bytes
+;; unchanged, so ints stay as ints rather than being reformatted through
+;; numeric payload coercion. Useful for mirroring a feed to a debug subject.
 (on "tinyblok.temp"
-  (publish! "tinyblok.temp.raw"))
+  (publish! "tinyblok.temp.raw" payload))
 
 ;; 10-sample tick OHLC over the temp feed; emits to
 ;; tinyblok.temp.bar.{open,high,low,close} every 10 samples (= 10 s @ 1 Hz).

@@ -13,6 +13,7 @@ The fastest path is browser-based flashing: open <a href="https://flash.monoblok
 To build and flash from source:
 
 ```sh
+git submodule update --init --recursive
 make build
 make flash
 make monitor
@@ -221,7 +222,10 @@ nats req tinyblok.req.hello-c17 tinyhi
 
 `patchbay.edn` is embedded into the firmware image by CMake and parsed once at
 boot. The parsed tree is arena-owned; long-lived rule state is held by
-`pb_eval_state`.
+`pb_eval_state`. The patchbay parser/evaluator comes from the pinned
+`third_party/monoblok` submodule; Tinyblok-specific `(pump ...)`, `(fn ...)`,
+and `(on-req ...)` declarations are handled by
+[main/c/tinyblok_patchbay.c](./main/c/tinyblok_patchbay.c).
 
 ## TX ring
 
@@ -234,7 +238,7 @@ stalls, the ring drops the oldest samples rather than blocking rule evaluation.
 
 [main/c/stub.c](./main/c/stub.c), [main/c/nats.c](./main/c/nats.c),
 [main/c/drivers.c](./main/c/drivers.c), [main/c/sources.c](./main/c/sources.c),
-and [main/c/patchbay](./main/c/patchbay) keep the firmware in one C17-friendly
+and the monoblok patchbay C sources keep the firmware in one C17-friendly
 language boundary. The host test path builds the same patchbay C files used by
 firmware.
 
@@ -259,6 +263,16 @@ Run these from a shell where ESP-IDF is already exported, install ESP-IDF at
 unset for ESP-IDF auto-detection or pass a serial device, for example
 `make flash PORT=/dev/cu.usbmodem101`. You can also put machine-local
 overrides in ignored `local.mk`.
+
+Fresh clones need the monoblok submodule before `make test` or `make build`:
+
+```sh
+git submodule update --init --recursive
+```
+
+For local monoblok development, pass `MONOBLOK_DIR=../monoblok` to host
+commands such as `make test`. Firmware CMake also accepts
+`TINYBLOK_MONOBLOK_DIR` or the `MONOBLOK_DIR` environment variable.
 
 `make nats-host-smoke` exercises the host-built C NATS client against a local
 broker. It starts `nats-server` on `127.0.0.1:4223`, verifies request/reply on

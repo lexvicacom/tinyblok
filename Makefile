@@ -6,13 +6,36 @@ PORT           ?=
 HOST_CC        ?= cc
 NATS_HOST_PORT ?= 4223
 HOST_BUILD_DIR ?= build/host
+MONOBLOK_DIR   ?= third_party/monoblok
+MONOBLOK_SRC_DIR := $(MONOBLOK_DIR)/src
+MONOBLOK_PATCHBAY_DIR := $(MONOBLOK_SRC_DIR)/patchbay
+MONOBLOK_YYJSON_DIR := $(MONOBLOK_DIR)/vendor/yyjson/src
+PATCHBAY_JSON ?= 0
+
+MONOBLOK_CORE_C_SRCS = \
+	$(MONOBLOK_SRC_DIR)/array.c \
+	$(MONOBLOK_SRC_DIR)/buf.c \
+	$(MONOBLOK_SRC_DIR)/fs.c \
+	$(MONOBLOK_SRC_DIR)/proto.c \
+	$(MONOBLOK_SRC_DIR)/router.c \
+	$(MONOBLOK_SRC_DIR)/slice.c
+
 PATCHBAY_C_SRCS = \
-	main/c/patchbay/pb_arena.c \
-	main/c/patchbay/pb_builtins.c \
-	main/c/patchbay/pb_eval.c \
-	main/c/patchbay/pb_sexpr.c \
-	main/c/patchbay/pb_validate.c \
-	main/c/patchbay/pb_window_builtins.c
+	$(MONOBLOK_PATCHBAY_DIR)/pb_arena.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_eval.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_forms.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_json.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_program.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_sexpr.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_validate.c \
+	$(MONOBLOK_CORE_C_SRCS)
+
+ifeq ($(PATCHBAY_JSON),1)
+PATCHBAY_C_SRCS += $(MONOBLOK_YYJSON_DIR)/yyjson.c
+PATCHBAY_JSON_DEF := -DPB_ENABLE_JSON=1 -I$(MONOBLOK_YYJSON_DIR)
+else
+PATCHBAY_JSON_DEF := -DPB_ENABLE_JSON=0
+endif
 
 -include local.mk
 
@@ -36,7 +59,7 @@ endif
 
 PORT_ARG := $(if $(strip $(PORT)),-p $(PORT),)
 
-.PHONY: check-idf gen soundcheck build test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
+.PHONY: check-idf check-monoblok gen soundcheck build test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
 
 check-idf:
 	@if [ -n "$(IDF_EXPORT)" ]; then \
@@ -51,13 +74,21 @@ check-idf:
 		exit 1; \
 	fi
 
+check-monoblok:
+	@if [ ! -f "$(MONOBLOK_PATCHBAY_DIR)/pb_eval.c" ]; then \
+		echo "error: monoblok submodule is missing at $(MONOBLOK_DIR)" >&2; \
+		echo "hint: run 'git submodule update --init --recursive' or pass MONOBLOK_DIR=/path/to/monoblok" >&2; \
+		exit 1; \
+	fi
+
 gen:
 	@echo "patchbay.edn is runtime-parsed; no generated rules step"
 
-soundcheck:
+soundcheck: check-monoblok
 	@mkdir -p $(HOST_BUILD_DIR)
 	@echo "CC $(HOST_BUILD_DIR)/patchbay_check"
-	@$(HOST_CC) -std=c17 -D_GNU_SOURCE -DTINYBLOK -Imain/c/patchbay -Imain/c/vendor/yyjson \
+	@$(HOST_CC) -std=c17 -D_GNU_SOURCE -DTINYBLOK $(PATCHBAY_JSON_DEF) \
+		-I$(MONOBLOK_SRC_DIR) -I$(MONOBLOK_PATCHBAY_DIR) \
 		tests/host/patchbay_check.c $(PATCHBAY_C_SRCS) -lm -o $(HOST_BUILD_DIR)/patchbay_check
 	@$(HOST_BUILD_DIR)/patchbay_check patchbay.edn
 

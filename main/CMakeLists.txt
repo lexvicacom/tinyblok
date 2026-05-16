@@ -1,17 +1,55 @@
+get_filename_component(TINYBLOK_PROJECT_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
+set(TINYBLOK_MONOBLOK_DIR "" CACHE PATH "Path to a monoblok checkout")
+if(NOT TINYBLOK_MONOBLOK_DIR)
+    if(DEFINED ENV{MONOBLOK_DIR})
+        set(TINYBLOK_MONOBLOK_DIR "$ENV{MONOBLOK_DIR}")
+    else()
+        set(TINYBLOK_MONOBLOK_DIR "${TINYBLOK_PROJECT_DIR}/third_party/monoblok")
+    endif()
+endif()
+get_filename_component(TINYBLOK_MONOBLOK_DIR "${TINYBLOK_MONOBLOK_DIR}" ABSOLUTE)
+set(MONOBLOK_SRC_DIR "${TINYBLOK_MONOBLOK_DIR}/src")
+set(MONOBLOK_PATCHBAY_DIR "${MONOBLOK_SRC_DIR}/patchbay")
+set(MONOBLOK_YYJSON_DIR "${TINYBLOK_MONOBLOK_DIR}/vendor/yyjson/src")
+
+if(NOT EXISTS "${MONOBLOK_PATCHBAY_DIR}/pb_eval.c")
+    message(FATAL_ERROR
+        "monoblok patchbay not found at ${TINYBLOK_MONOBLOK_DIR}; "
+        "run `git submodule update --init --recursive` or set TINYBLOK_MONOBLOK_DIR/MONOBLOK_DIR")
+endif()
+
+set(MONOBLOK_CORE_SRCS
+    "${MONOBLOK_SRC_DIR}/array.c"
+    "${MONOBLOK_SRC_DIR}/buf.c"
+    "${MONOBLOK_SRC_DIR}/fs.c"
+    "${MONOBLOK_SRC_DIR}/proto.c"
+    "${MONOBLOK_SRC_DIR}/router.c"
+    "${MONOBLOK_SRC_DIR}/slice.c"
+)
+
+set(MONOBLOK_PATCHBAY_SRCS
+    "${MONOBLOK_PATCHBAY_DIR}/pb_arena.c"
+    "${MONOBLOK_PATCHBAY_DIR}/pb_eval.c"
+    "${MONOBLOK_PATCHBAY_DIR}/pb_forms.c"
+    "${MONOBLOK_PATCHBAY_DIR}/pb_json.c"
+    "${MONOBLOK_PATCHBAY_DIR}/pb_program.c"
+    "${MONOBLOK_PATCHBAY_DIR}/pb_sexpr.c"
+)
+
 # Always list every optional source/dep here. IDF's component manager parses
 # this call eagerly, so conditionals that depend on Kconfig values must be
 # applied AFTER idf_component_register via target_sources / idf_component_optional_requires.
 idf_component_register(
     SRCS "c/stub.c" "c/nats.c" "c/drivers.c" "c/sources.c" "c/user.c" "c/creds.c" "c/app_events.c" "c/display.c"
          "c/tinyblok_config.c" "c/tinyblok_wifi.c" "c/tinyblok_web.c" "c/tinyblok_patchbay.c" "c/tinyblok_tx_ring.c"
-         "c/patchbay/pb_arena.c" "c/patchbay/pb_builtins.c" "c/patchbay/pb_eval.c"
-         "c/patchbay/pb_program.c" "c/patchbay/pb_sexpr.c" "c/patchbay/pb_window_builtins.c"
-    INCLUDE_DIRS "c" "c/patchbay" "c/vendor/yyjson"
+         ${MONOBLOK_CORE_SRCS} ${MONOBLOK_PATCHBAY_SRCS}
+    INCLUDE_DIRS "c" "${MONOBLOK_SRC_DIR}" "${MONOBLOK_PATCHBAY_DIR}"
     PRIV_REQUIRES esp_timer esp_driver_tsens esp_driver_i2c esp_driver_gpio esp_wifi esp_event esp_netif nvs_flash lwip
                   esp_http_server mdns
 )
 
-file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION TINYBLOK_VERSION LIMIT_COUNT 1)
+file(STRINGS ${TINYBLOK_PROJECT_DIR}/VERSION TINYBLOK_VERSION LIMIT_COUNT 1)
 if(NOT TINYBLOK_VERSION)
     set(TINYBLOK_VERSION "dev")
 endif()
@@ -19,10 +57,13 @@ endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYBLOK TINYBLOK_VERSION=\"${TINYBLOK_VERSION}\")
 
 if(CONFIG_TINYBLOK_PATCHBAY_JSON)
-    target_sources(${COMPONENT_LIB} PRIVATE "c/patchbay/pb_json.c" "c/vendor/yyjson/yyjson.c")
+    target_sources(${COMPONENT_LIB} PRIVATE "${MONOBLOK_YYJSON_DIR}/yyjson.c")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE PB_ENABLE_JSON=1)
-    set_source_files_properties(c/vendor/yyjson/yyjson.c PROPERTIES
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${MONOBLOK_YYJSON_DIR}")
+    set_source_files_properties("${MONOBLOK_YYJSON_DIR}/yyjson.c" PROPERTIES
         COMPILE_FLAGS "-Wno-error=maybe-uninitialized")
+else()
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PB_ENABLE_JSON=0)
 endif()
 
 set(RSRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rsrc)
@@ -50,8 +91,8 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT ${PATCHBAY_EDN_HEADER}
-    COMMAND ${XXD_EXECUTABLE} -i -n tinyblok_patchbay_edn ${CMAKE_SOURCE_DIR}/patchbay.edn ${PATCHBAY_EDN_HEADER}
-    DEPENDS ${CMAKE_SOURCE_DIR}/patchbay.edn
+    COMMAND ${XXD_EXECUTABLE} -i -n tinyblok_patchbay_edn ${TINYBLOK_PROJECT_DIR}/patchbay.edn ${PATCHBAY_EDN_HEADER}
+    DEPENDS ${TINYBLOK_PROJECT_DIR}/patchbay.edn
     COMMENT "Embedding patchbay.edn"
     VERBATIM
 )
