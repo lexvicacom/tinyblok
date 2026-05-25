@@ -99,15 +99,15 @@ parser/evaluator derived from monoblok, reads local sensor pumps, derives new
 subjects, answers fixed request/reply subjects, and publishes results to NATS.
 
 It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
-loading, dynamic graph edits, JSON/event document processing, inbound bridges,
-and fleet-management features are outside the current scope.
+loading, dynamic graph edits, inbound bridges, JetStream replay/consumer
+workers, and fleet-management features are outside the current scope.
 
 ### What's there and not there
 
 Tinyblok uses monoblok's C parser/evaluator for normal `(on ...)` rules, with a
 small Tinyblok layer for `(pump ...)`, `(fn ...)`, `(on-req ...)`, and `reply!`.
-Top-level `lvc` and `bridge` forms are parsed by the vendored core but are not
-wired into firmware policy.
+Top-level `lvc`, `export`/deprecated `bridge`, and `import` forms are parsed by
+the vendored core but are not wired into firmware policy.
 
 When using a coding assistant to author or edit patchbay rules, include the
 monoblok patchbay agent guidance from
@@ -116,7 +116,64 @@ monoblok patchbay agent guidance from
 ### Soundcheck
 
 Running `make soundcheck` builds a host C validator and checks
-[patchbay.edn](./patchbay.edn) with the vendored parser/evaluator.
+[patchbay.edn](./patchbay.edn) with the vendored parser/evaluator. Pass
+`PATCHBAY_FILE=path/to/patchbay.yml` to validate a YAML patchbay; the host
+validator will compile the structured parser automatically for `.json`, `.yml`,
+and `.yaml` inputs.
+
+Firmware builds embed `patchbay.edn` by default. To embed a different source,
+pass `-DTINYBLOK_PATCHBAY_SOURCE=patchbay.yml` through CMake/ESP-IDF. YAML and
+JSON source files enable the structured parser for that build; EDN keeps the
+small parser-only path.
+
+### As A Component
+
+The intended library shape is an ESP-IDF project that imports Tinyblok's
+`main/` directory as the firmware component and supplies only app-specific rules
+and native symbols. Tinyblok keeps the default `app_main`, setup portal, Wi-Fi,
+NATS client, pump timers, and patchbay runtime. The consuming project does not
+need its own `main/` component unless it is replacing Tinyblok's boot flow.
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+
+set(EXTRA_COMPONENT_DIRS "/path/to/tinyblok/main")
+set(TINYBLOK_PATCHBAY_SOURCE "patchbay.yml" CACHE FILEPATH "")
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(my_sensor)
+```
+
+Put `patchbay.yml` or `patchbay.edn` in the consuming project root. If the
+patchbay source lives elsewhere, set `TINYBLOK_PATCHBAY_SOURCE` to an absolute
+path.
+
+App-specific pumps and functions live in any component that includes
+`tinyblok_patchbay.h` and defines `tinyblok_app_native_symbols`:
+
+```c
+#include "tinyblok_patchbay.h"
+
+static float board_temp_c(void)
+{
+    return 21.5f;
+}
+
+size_t tinyblok_app_native_symbols(const tinyblok_native_symbol **out)
+{
+    static const tinyblok_native_symbol symbols[] = {
+        {.name = "board_temp_c", .type = TINYBLOK_TYPE_F32, .fn.read_f32 = board_temp_c},
+    };
+    *out = symbols;
+    return sizeof(symbols) / sizeof(symbols[0]);
+}
+```
+
+Then reference it from the patchbay:
+
+```clojure
+(pump "board.temp" :from board_temp_c :type f32 :hz 1)
+```
 
 ## Drivers
 
@@ -218,7 +275,7 @@ nats req tinyblok.req.hello-c tinyhi
 
 ### How it fits together
 
-`patchbay.edn` is embedded into the firmware image by CMake and parsed once at
+The selected patchbay source is embedded into the firmware image by CMake and parsed once at
 boot. The parsed tree is arena-owned; long-lived rule state is held by
 `pb_eval_state`. The patchbay parser/evaluator comes from the pinned
 `third_party/monoblok` submodule; Tinyblok-specific `(pump ...)`, `(fn ...)`,

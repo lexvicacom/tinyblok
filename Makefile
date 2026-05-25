@@ -7,11 +7,14 @@ HOST_CC        ?= cc
 NATS_HOST_PORT ?= 4223
 NATS_PROTOCOL_PORT ?= 4224
 HOST_BUILD_DIR ?= build/host
+COMPONENT_EXAMPLE_DIR ?= examples/component-firmware
 MONOBLOK_DIR   ?= third_party/monoblok
 MONOBLOK_SRC_DIR := $(MONOBLOK_DIR)/src
 MONOBLOK_PATCHBAY_DIR := $(MONOBLOK_SRC_DIR)/patchbay
 MONOBLOK_YYJSON_DIR := $(MONOBLOK_DIR)/vendor/yyjson/src
+PATCHBAY_FILE ?= patchbay.edn
 PATCHBAY_JSON ?= 0
+PATCHBAY_STRUCTURED := $(filter %.json %.yml %.yaml,$(PATCHBAY_FILE))
 
 MONOBLOK_CORE_C_SRCS = \
 	$(MONOBLOK_SRC_DIR)/array.c \
@@ -21,7 +24,7 @@ MONOBLOK_CORE_C_SRCS = \
 	$(MONOBLOK_SRC_DIR)/router.c \
 	$(MONOBLOK_SRC_DIR)/slice.c
 
-PATCHBAY_C_SRCS = \
+PATCHBAY_BASE_C_SRCS = \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_arena.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_eval.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_forms.c \
@@ -31,8 +34,18 @@ PATCHBAY_C_SRCS = \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_validate.c \
 	$(MONOBLOK_CORE_C_SRCS)
 
+PATCHBAY_STRUCTURED_C_SRCS = \
+	$(PATCHBAY_BASE_C_SRCS) \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_yaml.c \
+	$(MONOBLOK_YYJSON_DIR)/yyjson.c
+
+PATCHBAY_C_SRCS = $(PATCHBAY_BASE_C_SRCS)
+
 ifeq ($(PATCHBAY_JSON),1)
-PATCHBAY_C_SRCS += $(MONOBLOK_YYJSON_DIR)/yyjson.c
+PATCHBAY_C_SRCS = $(PATCHBAY_STRUCTURED_C_SRCS)
+PATCHBAY_JSON_DEF := -DPB_ENABLE_JSON=1 -I$(MONOBLOK_YYJSON_DIR)
+else ifneq ($(PATCHBAY_STRUCTURED),)
+PATCHBAY_C_SRCS = $(PATCHBAY_STRUCTURED_C_SRCS)
 PATCHBAY_JSON_DEF := -DPB_ENABLE_JSON=1 -I$(MONOBLOK_YYJSON_DIR)
 else
 PATCHBAY_JSON_DEF := -DPB_ENABLE_JSON=0
@@ -60,7 +73,7 @@ endif
 
 PORT_ARG := $(if $(strip $(PORT)),-p $(PORT),)
 
-.PHONY: check-idf check-monoblok gen soundcheck build test nats-protocol-test nats-host-smoke flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
+.PHONY: check-idf check-monoblok gen soundcheck yaml-soundcheck build test nats-protocol-test nats-host-smoke component-example-build component-example-flash component-example-monitor component-example-flash-monitor component-example-clean component-example-fullclean flash monitor flash-monitor erase-flash-monitor clean fullclean menuconfig
 
 check-idf:
 	@if [ -n "$(IDF_EXPORT)" ]; then \
@@ -83,7 +96,7 @@ check-monoblok:
 	fi
 
 gen:
-	@echo "patchbay.edn is runtime-parsed; no generated rules step"
+	@echo "$(PATCHBAY_FILE) is runtime-parsed; no generated rules step"
 
 soundcheck: check-monoblok
 	@mkdir -p $(HOST_BUILD_DIR)
@@ -91,12 +104,40 @@ soundcheck: check-monoblok
 	@$(HOST_CC) -std=c17 -D_GNU_SOURCE -DTINYBLOK $(PATCHBAY_JSON_DEF) \
 		-I$(MONOBLOK_SRC_DIR) -I$(MONOBLOK_PATCHBAY_DIR) \
 		tests/host/patchbay_check.c $(PATCHBAY_C_SRCS) -lm -o $(HOST_BUILD_DIR)/patchbay_check
-	@$(HOST_BUILD_DIR)/patchbay_check patchbay.edn
+	@$(HOST_BUILD_DIR)/patchbay_check $(PATCHBAY_FILE)
+
+yaml-soundcheck: check-monoblok
+	@mkdir -p $(HOST_BUILD_DIR)
+	@echo "CC $(HOST_BUILD_DIR)/patchbay_check_yaml"
+	@$(HOST_CC) -std=c17 -D_GNU_SOURCE -DTINYBLOK -DPB_ENABLE_JSON=1 \
+		-I$(MONOBLOK_SRC_DIR) -I$(MONOBLOK_PATCHBAY_DIR) -I$(MONOBLOK_YYJSON_DIR) \
+		tests/host/patchbay_check.c $(PATCHBAY_STRUCTURED_C_SRCS) -lm -o $(HOST_BUILD_DIR)/patchbay_check_yaml
+	@$(HOST_BUILD_DIR)/patchbay_check_yaml tests/host/patchbay_yaml.yml
 
 build: check-idf
 	@$(IDF) build
 
-test: soundcheck nats-protocol-test
+test: soundcheck yaml-soundcheck nats-protocol-test
+
+component-example-build: check-idf
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) build
+
+component-example-flash: check-idf
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) $(PORT_ARG) flash
+
+component-example-monitor: check-idf
+	@echo "(exit with Ctrl+])"
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) $(PORT_ARG) monitor
+
+component-example-flash-monitor: check-idf
+	@echo "(exit with Ctrl+])"
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) $(PORT_ARG) flash monitor
+
+component-example-clean: check-idf
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) clean
+
+component-example-fullclean: check-idf
+	@cd "$(COMPONENT_EXAMPLE_DIR)" && $(IDF) fullclean
 
 nats-protocol-test:
 	@mkdir -p $(HOST_BUILD_DIR)

@@ -1,0 +1,22 @@
+pump:
+  - sub: board.temp
+    from: board_temp_c
+    type: f32
+    hz: 1
+
+fn:
+  - name: board-echo
+    from: board_echo
+    input: bytes
+    type: bytes
+
+on-req:
+  - sub: board.req.echo
+    body: [reply!, [board-echo, payload]]
+
+on:
+  - sub: tinyblok.temp
+    thread:
+      - payload-float
+      - [round, 1]
+      - [publish!, [subject-append, yaml]]

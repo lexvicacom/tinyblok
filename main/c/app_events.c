@@ -82,3 +82,13 @@ void tinyblok_event_publish_nats_disconnected(void)
         ESP_LOGW(TAG, "nats disconnect event post failed: %s", esp_err_to_name(err));
 #endif
 }
+
+void tinyblok_event_publish_nats_permissions(void)
+{
+#ifdef ESP_PLATFORM
+    esp_err_t err = esp_event_post(TINYBLOK_EVENT, TINYBLOK_EVENT_NATS_PERMISSIONS,
+                                   NULL, 0, 0);
+    if (err != ESP_OK)
+        ESP_LOGW(TAG, "nats permissions event post failed: %s", esp_err_to_name(err));
+#endif
+}

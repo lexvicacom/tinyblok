@@ -4,8 +4,8 @@
 ;; (fn ...) registers a compiled C symbol callable from rules or (on-req).
 ;; Each (on-req ...) registers a NATS request subject and runs patchbay code.
 ;;
-;; Put user-owned implementations in main/c/user.c, add them to the native
-;; symbol table in main/c/tinyblok_patchbay.c, then name the C symbol in :from.
+;; Put user-owned implementations in an app component, expose them through
+;; tinyblok_app_native_symbols(), then name the C symbol in :from.
 
 (pump "tinyblok.heap"   :from tinyblok_free_heap    :type u32      :hz 10)
 (pump "tinyblok.rssi"   :from tinyblok_wifi_rssi    :type i32      :hz 10)

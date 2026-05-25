@@ -1,0 +1,36 @@
+pump:
+  - sub: board.temp
+    from: board_temp_c
+    type: f32
+    hz: 1
+  - sub: board.counter
+    from: board_counter
+    type: u32
+    hz: 1
+
+fn:
+  - name: board-echo
+    from: board_echo
+    input: bytes
+    type: bytes
+
+on:
+  - sub: board.temp
+    thread:
+      - payload-float
+      - [round, 1]
+      - [publish!, [subject-append, rounded]]
+
+  - sub: board.counter
+    thread:
+      - payload-float
+      - [throttle, :ms, 10000, 1]
+      - [publish!, [subject-append, every10s]]
+
+# Request handlers subscribe to their subject on the NATS broker. Enable this
+# only when the configured account may subscribe to `board.req.echo`; otherwise
+# the broker will send `-ERR 'Permissions Violation...'` and disconnect.
+#
+# on-req:
+#   - sub: board.req.echo
+#     body: [reply!, [board-echo, payload]]

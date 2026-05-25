@@ -17,7 +17,11 @@
 #include "patchbay/pb_program.h"
 #include "tinyblok_tx_ring.h"
 
-#include "tinyblok_patchbay_edn.h"
+#include "tinyblok_patchbay_src.h"
+
+#ifndef TINYBLOK_PATCHBAY_SOURCE_LABEL
+#define TINYBLOK_PATCHBAY_SOURCE_LABEL "patchbay.edn"
+#endif
 
 #define MAIN_LOOP_DELAY_TICKS 10
 #define MAX_PUMPS 16
@@ -25,47 +29,12 @@
 #define MAX_REQUESTS 16
 #define FUNCTION_OUT_MAX 64
 
-typedef uint32_t (*read_u32_fn)(void);
-typedef int (*read_i32_fn)(void);
-typedef float (*read_f32_fn)(void);
-typedef uint64_t (*read_u64_fn)(void);
-typedef float (*call_f32_f32_fn)(float);
-typedef size_t (*call_bytes_fn)(const uint8_t *payload, size_t payload_len, uint8_t *out, size_t out_len);
-
-typedef enum tinyblok_value_type
-{
-    TINYBLOK_TYPE_U32,
-    TINYBLOK_TYPE_I32,
-    TINYBLOK_TYPE_F32,
-    TINYBLOK_TYPE_U64,
-    TINYBLOK_TYPE_UPTIME_S,
-    TINYBLOK_TYPE_BYTES,
-} tinyblok_value_type;
-
-// Compiled C symbol that a parsed `(pump ...)` or `(fn ...)` may reference.
-typedef struct native_symbol
-{
-    const char *name;
-    tinyblok_value_type type;
-    tinyblok_value_type input;
-    bool has_input;
-    union
-    {
-        read_u32_fn read_u32;
-        read_i32_fn read_i32;
-        read_f32_fn read_f32;
-        read_u64_fn read_u64;
-        call_f32_f32_fn call_f32_f32;
-        call_bytes_fn call_bytes;
-    } fn;
-} native_symbol;
-
 // User-visible `(fn NAME ...)` binding. The name is borrowed from the parse
 // arena; the target points at a static native symbol entry.
 typedef struct function_binding
 {
     pb_slice name;
-    const native_symbol *target;
+    const tinyblok_native_symbol *target;
 } function_binding;
 
 // Request handler loaded from `(on-req SUBJECT BODY)`. Subject/body are owned
@@ -81,7 +50,7 @@ typedef struct patchbay_runtime
     pb_program program;
     pb_arena decl_arena;
     tinyblok_pump pumps[MAX_PUMPS];
-    const native_symbol *pump_symbols[MAX_PUMPS];
+    const tinyblok_native_symbol *pump_symbols[MAX_PUMPS];
     tinyblok_value_type pump_types[MAX_PUMPS];
     size_t pump_count;
     function_binding functions[MAX_FUNCTIONS];
@@ -123,7 +92,7 @@ static size_t tinyblok_hello_c17(const uint8_t *payload, size_t payload_len, uin
     return n;
 }
 
-static const native_symbol NATIVE_SYMBOLS[] = {
+static const tinyblok_native_symbol BUILTIN_SYMBOLS[] = {
     {.name = "tinyblok_free_heap", .type = TINYBLOK_TYPE_U32, .fn.read_u32 = tinyblok_free_heap},
     {.name = "tinyblok_wifi_rssi", .type = TINYBLOK_TYPE_I32, .fn.read_i32 = tinyblok_wifi_rssi},
     {.name = "tinyblok_uptime_us", .type = TINYBLOK_TYPE_U64, .fn.read_u64 = tinyblok_uptime_us},
@@ -133,20 +102,41 @@ static const native_symbol NATIVE_SYMBOLS[] = {
     {.name = "tinyblok_hello_c17", .type = TINYBLOK_TYPE_BYTES, .input = TINYBLOK_TYPE_BYTES, .has_input = true, .fn.call_bytes = tinyblok_hello_c17},
 };
 
+__attribute__((weak)) size_t tinyblok_app_native_symbols(const tinyblok_native_symbol **out)
+{
+    if (out != NULL)
+        *out = NULL;
+    return 0;
+}
+
 static bool slice_eq(pb_slice s, const char *lit)
 {
     const size_t n = strlen(lit);
     return s.len == n && memcmp(s.ptr, lit, n) == 0;
 }
 
-static const native_symbol *find_native(pb_slice name)
+static const tinyblok_native_symbol *find_native_in(pb_slice name, const tinyblok_native_symbol *symbols, size_t count)
 {
-    for (size_t i = 0; i < sizeof(NATIVE_SYMBOLS) / sizeof(NATIVE_SYMBOLS[0]); i += 1)
+    for (size_t i = 0; i < count; i += 1)
     {
-        if (slice_eq(name, NATIVE_SYMBOLS[i].name))
-            return &NATIVE_SYMBOLS[i];
+        if (slice_eq(name, symbols[i].name))
+            return &symbols[i];
     }
     return NULL;
+}
+
+static const tinyblok_native_symbol *find_native(pb_slice name)
+{
+    const tinyblok_native_symbol *sym = find_native_in(name, BUILTIN_SYMBOLS,
+                                                       sizeof(BUILTIN_SYMBOLS) / sizeof(BUILTIN_SYMBOLS[0]));
+    if (sym != NULL)
+        return sym;
+
+    const tinyblok_native_symbol *app_symbols = NULL;
+    const size_t app_symbol_count = tinyblok_app_native_symbols(&app_symbols);
+    if (app_symbols == NULL)
+        return NULL;
+    return find_native_in(name, app_symbols, app_symbol_count);
 }
 
 static function_binding *find_function(pb_slice name)
@@ -211,15 +201,16 @@ static char *arena_cstr(pb_slice s)
     return out;
 }
 
-static void bridge_publish(void *ctx, mb_slice subject, mb_slice payload)
+static void bridge_publish(void *ctx, mb_slice subject, mb_slice payload, mb_router_publish_options options)
 {
     (void)ctx;
+    (void)options;
     if (!tinyblok_nats_subject_is_valid(subject.ptr, subject.len))
         return;
     (void)tinyblok_tx_ring_enqueue(subject.ptr, subject.len, payload.ptr, payload.len);
 }
 
-static double read_native_number(const native_symbol *sym)
+static double read_native_number(const tinyblok_native_symbol *sym)
 {
     switch (sym->type)
     {
@@ -293,11 +284,17 @@ static bool load_pump(pb_values items)
         return false;
 
     if (!tinyblok_nats_subject_is_valid((const unsigned char *)items.items[1].text.ptr, items.items[1].text.len))
+    {
+        ESP_LOGE(TAG, "invalid pump subject '%.*s'", (int)items.items[1].text.len, items.items[1].text.ptr);
         return false;
+    }
 
-    const native_symbol *sym = find_native(from.text);
+    const tinyblok_native_symbol *sym = find_native(from.text);
     if (sym == NULL)
+    {
+        ESP_LOGE(TAG, "unknown pump native symbol '%.*s'", (int)from.text.len, from.text.ptr);
         return false;
+    }
     char *subject = arena_cstr(items.items[1].text);
     if (subject == NULL)
         return false;
@@ -321,9 +318,12 @@ static bool load_function(pb_values items)
     pb_value from = {0};
     if (!kwarg(items, "from", &from) || from.kind != PB_SYMBOL)
         return false;
-    const native_symbol *sym = find_native(from.text);
+    const tinyblok_native_symbol *sym = find_native(from.text);
     if (sym == NULL)
+    {
+        ESP_LOGE(TAG, "unknown function native symbol '%.*s'", (int)from.text.len, from.text.ptr);
         return false;
+    }
 
     s_pb.functions[s_pb.function_count++] = (function_binding){
         .name = items.items[1].text,
@@ -337,7 +337,10 @@ static bool load_request(pb_values items)
     if (items.len < 3 || s_pb.request_count >= MAX_REQUESTS || items.items[1].kind != PB_STRING)
         return false;
     if (!tinyblok_nats_subject_is_valid((const unsigned char *)items.items[1].text.ptr, items.items[1].text.len))
+    {
+        ESP_LOGE(TAG, "invalid request subject '%.*s'", (int)items.items[1].text.len, items.items[1].text.ptr);
         return false;
+    }
     char *subject = arena_cstr(items.items[1].text);
     if (subject == NULL)
         return false;
@@ -350,9 +353,9 @@ static bool load_request(pb_values items)
 
 static bool load_declarations(void)
 {
-    const pb_parse_result parsed = pb_parse_patchbay_source(&s_pb.decl_arena, "patchbay.edn",
-                                                            (const char *)tinyblok_patchbay_edn,
-                                                            (size_t)tinyblok_patchbay_edn_len);
+    const pb_parse_result parsed = pb_parse_patchbay_source(&s_pb.decl_arena, TINYBLOK_PATCHBAY_SOURCE_LABEL,
+                                                            (const char *)tinyblok_patchbay_src,
+                                                            (size_t)tinyblok_patchbay_src_len);
     if (parsed.err != PB_PARSE_OK)
     {
         ESP_LOGE(TAG, "parse error: %s at byte %u", pb_parse_error_name(parsed.err), (unsigned)parsed.err_offset);
@@ -380,7 +383,8 @@ int tinyblok_patchbay_init(void)
     mb_router_init(&s_pb.router);
     s_pb.router.bridge_ctx = &s_pb;
     s_pb.router.bridge_fn = bridge_publish;
-    if (!pb_program_load_source(&s_pb.program, "patchbay.edn", (const char *)tinyblok_patchbay_edn, (size_t)tinyblok_patchbay_edn_len))
+    if (!pb_program_load_source(&s_pb.program, TINYBLOK_PATCHBAY_SOURCE_LABEL,
+                                (const char *)tinyblok_patchbay_src, (size_t)tinyblok_patchbay_src_len))
         return -1;
     if (!load_declarations())
         return -1;
@@ -415,7 +419,7 @@ void tinyblok_patchbay_fire_pump(size_t index)
 {
     if (index >= s_pb.pump_count)
         return;
-    const native_symbol *sym = s_pb.pump_symbols[index];
+    const tinyblok_native_symbol *sym = s_pb.pump_symbols[index];
     char payload[TINYBLOK_PAYLOAD_MAX];
     size_t payload_len = 0;
     double value = read_native_number(sym);
@@ -489,7 +493,7 @@ static bool tinyblok_eval_call(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, 
     function_binding *binding = find_function(name);
     if (binding == NULL)
         return false;
-    const native_symbol *sym = binding->target;
+    const tinyblok_native_symbol *sym = binding->target;
     if (!sym->has_input)
     {
         if (args.len != 0)
@@ -563,7 +567,7 @@ void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_l
 void tinyblok_patchbay_clock_fired(void)
 {
     const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000);
-    (void)pb_program_tick(&s_pb.program, &s_pb.router, now_ms, (int64_t)now_ms);
+    (void)pb_program_tick_until(&s_pb.program, &s_pb.router, now_ms, (int64_t)now_ms, (pb_program_eval_options){0});
     tinyblok_patchbay_arm_next_clock();
 }
 

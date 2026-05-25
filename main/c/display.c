@@ -85,6 +85,7 @@ typedef struct
     bool wifi_connected;
     bool setup_portal;
     bool nats_connected;
+    bool nats_permissions_error;
     char ssid[33];
     char ip[16];
     char nats_host[64];
@@ -131,6 +132,7 @@ void tinyblok_display_wifi_connecting(const char *ssid)
     state.wifi_connected = false;
     state.setup_portal = false;
     state.nats_connected = false;
+    state.nats_permissions_error = false;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     state.ip[0] = '\0';
     state.nats_host[0] = '\0';
@@ -150,6 +152,7 @@ void tinyblok_display_setup_portal(const char *ssid)
     state.wifi_connected = false;
     state.setup_portal = true;
     state.nats_connected = false;
+    state.nats_permissions_error = false;
     strlcpy(state.ssid, ssid != NULL ? ssid : "", sizeof(state.ssid));
     state.ip[0] = '\0';
     state.nats_host[0] = '\0';
@@ -187,6 +190,7 @@ void tinyblok_display_wifi_disconnected(void)
     state.wifi_connected = false;
     state.setup_portal = false;
     state.nats_connected = false;
+    state.nats_permissions_error = false;
     state.ip[0] = '\0';
     state.nats_host[0] = '\0';
     state.nats_ip[0] = '\0';
@@ -221,6 +225,7 @@ static void app_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         strlcpy(state.nats_ip, event->ip, sizeof(state.nats_ip));
         state.nats_port = event->port;
         state.nats_connected = true;
+        state.nats_permissions_error = false;
         portEXIT_CRITICAL(&state_mux);
         display_notify();
     }
@@ -231,6 +236,17 @@ static void app_event_handler(void *arg, esp_event_base_t base, int32_t id, void
         state.nats_ip[0] = '\0';
         state.nats_port = 0;
         state.nats_connected = false;
+        portEXIT_CRITICAL(&state_mux);
+        display_notify();
+    }
+    else if (id == TINYBLOK_EVENT_NATS_PERMISSIONS)
+    {
+        portENTER_CRITICAL(&state_mux);
+        state.nats_host[0] = '\0';
+        state.nats_ip[0] = '\0';
+        state.nats_port = 0;
+        state.nats_connected = false;
+        state.nats_permissions_error = true;
         portEXIT_CRITICAL(&state_mux);
         display_notify();
     }
@@ -839,8 +855,11 @@ static void draw_status(void)
     char line1[DISPLAY_TEXT_COLS + 1];
     char line2[DISPLAY_TEXT_COLS + 1];
     char line3[DISPLAY_TEXT_COLS + 1];
-    snprintf(line1, sizeof(line1), "tinyblok NATS %s",
-             copy.nats_connected ? "OK" : "--");
+    if (copy.nats_permissions_error)
+        snprintf(line1, sizeof(line1), "CHECK NATS PERMS");
+    else
+        snprintf(line1, sizeof(line1), "tinyblok NATS %s",
+                 copy.nats_connected ? "OK" : "--");
     snprintf(line2, sizeof(line2), "PUBs: %lu", (unsigned long)tinyblok_pub_count());
     snprintf(line3, sizeof(line3), "%s", copy.nats_ip);
 

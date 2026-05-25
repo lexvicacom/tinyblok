@@ -83,6 +83,22 @@ static int64_t last_connect_attempt_us = 0;
 #define RECONNECT_AFTER_ERR_US (60LL * 1000 * 1000)
 static int64_t backoff_until_us = 0;
 
+static int is_permissions_error(const char *line, size_t line_len)
+{
+    static const char needle[] = "Permissions Violation";
+    return line != NULL && memmem(line, line_len, needle, sizeof(needle) - 1) != NULL;
+}
+
+static void handle_broker_err_line(const char *line, size_t line_len)
+{
+    ESP_LOGW(TAG, "<- %.*s (backing off %llds)",
+             (int)(line_len > 120 ? 120 : line_len), line,
+             RECONNECT_AFTER_ERR_US / 1000000);
+    if (is_permissions_error(line, line_len))
+        tinyblok_event_publish_nats_permissions();
+    backoff_until_us = esp_timer_get_time() + RECONNECT_AFTER_ERR_US;
+}
+
 #ifdef ESP_PLATFORM
 static int load_runtime_config(void)
 {
@@ -766,10 +782,7 @@ static int wait_for_connect_pong(int64_t deadline_us)
         }
         if (line_len >= 4 && memcmp(line, "-ERR", 4) == 0)
         {
-            ESP_LOGW(TAG, "<- %.*s (backing off %llds)",
-                     (int)(line_len > 120 ? 120 : line_len), line,
-                     RECONNECT_AFTER_ERR_US / 1000000);
-            backoff_until_us = esp_timer_get_time() + RECONNECT_AFTER_ERR_US;
+            handle_broker_err_line(line, line_len);
             return -1;
         }
         if (line_len > 0)
@@ -1203,10 +1216,7 @@ void tinyblok_nats_drain_rx(void)
         }
         else if (line_len >= 4 && memcmp(line, "-ERR", 4) == 0)
         {
-            ESP_LOGW(TAG, "<- %.*s (backing off %llds)",
-                     (int)(line_len > 120 ? 120 : line_len), line,
-                     RECONNECT_AFTER_ERR_US / 1000000);
-            backoff_until_us = esp_timer_get_time() + RECONNECT_AFTER_ERR_US;
+            handle_broker_err_line(line, line_len);
             close_sock(1);
             return;
         }

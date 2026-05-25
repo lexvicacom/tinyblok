@@ -1,7 +1,9 @@
-// User-owned C sources for patchbay functions.
+// Example C sources for patchbay functions.
 //
-// Add small ESP-IDF-facing pump reads or request helpers here, then register
-// them from patchbay.edn with:
+// Apps that consume Tinyblok as a component should put their own pump reads or
+// request helpers in a separate component and expose them with
+// tinyblok_app_native_symbols() from tinyblok_patchbay.h. This file remains a
+// small in-tree example for the default patchbay.
 //
 // - (pump SUBJECT :from symbol ...)
 // - (fn NAME :from symbol ...)
@@ -24,6 +26,6 @@ patchbay.edn:
 
 (pump "tinyblok.user.counter" :from tinyblok_user_counter :type u32 :hz 1)
 
-For request handlers, add the compiled symbol to tinyblok_patchbay.c's native
-symbol table, add an (fn ...) declaration here, then call it from (on-req ...).
+For component users, expose the compiled symbol from tinyblok_app_native_symbols,
+add an (fn ...) declaration, then call it from (on-req ...).
 */

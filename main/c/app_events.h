@@ -16,6 +16,7 @@ typedef enum
     TINYBLOK_EVENT_NATS_CONNECTED = 2,
     TINYBLOK_EVENT_PUB_SENT = 3,
     TINYBLOK_EVENT_NATS_DISCONNECTED = 4,
+    TINYBLOK_EVENT_NATS_PERMISSIONS = 5,
 } tinyblok_event_id_t;
 
 typedef struct
@@ -34,6 +35,7 @@ void tinyblok_event_publish_message_processed(void);
 void tinyblok_event_publish_pub_sent(void);
 void tinyblok_event_publish_nats_connected(const char *host, const char *ip, uint16_t port);
 void tinyblok_event_publish_nats_disconnected(void);
+void tinyblok_event_publish_nats_permissions(void);
 uint32_t tinyblok_message_count(void);
 uint32_t tinyblok_pub_count(void);
 

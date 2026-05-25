@@ -119,12 +119,16 @@ menu "tinyblok"
             task is evaluating patchbay rules.
 
     config TINYBLOK_PATCHBAY_JSON
-        bool "Enable JSON patchbay forms"
+        bool "Enable JSON/YAML patchbay source support"
         default n
         help
-            Compile in JSON patchbay file parsing and json-get/json-demux!
-            builtins. This pulls in yyjson and is disabled by default for
-            firmware size.
+            Compile in JSON patchbay file parsing, YAML patchbay source
+            parsing, and json-get/json-demux! builtins. This pulls in yyjson
+            and is disabled by default for firmware size.
+
+            Selecting a .json, .yml, or .yaml TINYBLOK_PATCHBAY_SOURCE in
+            CMake also enables the structured parser for that build, even if
+            this option is off.
 
     config TINYBLOK_TIMEZONE
         string "Default timezone"

@@ -11,7 +11,7 @@ Keep `main/` as the ESP-IDF component root:
 
 - `main/c/` holds firmware C code, the Tinyblok patchbay glue, NATS, Wi-Fi, sockets, TLS, sensors, the TX ring, and vendored TweetNaCl.
 - `third_party/monoblok/` is a git submodule and is the canonical patchbay source. Run `git submodule update --init --recursive` after cloning.
-- `main/CMakeLists.txt` registers C sources and embeds `patchbay.edn` into a generated header.
+- `main/CMakeLists.txt` registers C sources and embeds the selected patchbay source into a generated header.
 
 ## Common Commands
 
@@ -20,7 +20,7 @@ exported, install ESP-IDF at `$(HOME)/esp-idf-v6.0.1`, or pass
 `IDF_PATH=/path/to/esp-idf` or `IDF_EXPORT=/path/to/esp-idf/export.sh`.
 
 ```sh
-make gen                # no-op note; patchbay.edn is runtime-parsed
+make gen                # no-op note; patchbay source is runtime-parsed
 make soundcheck         # build/run host C patchbay validator
 make test               # host C patchbay validation
 make build              # idf.py build
@@ -41,7 +41,7 @@ device such as `PORT=/dev/cu.usbmodem101`.
 - `main/c/drivers.c` and `main/c/sources.c`: pump timer/event layer and sensor reads.
 - `main/c/tinyblok_patchbay.c`: embeds Tinyblok-specific `(pump ...)`, `(fn ...)`, `(on-req ...)`, and evaluator hooks.
 - `main/c/tinyblok_tx_ring.c`: bounded publish queue drained by the main loop.
-- `main/c/user.c`: user-owned C helpers named from `patchbay.edn`.
+- `main/c/user.c`: in-tree example C helpers named from the default patchbay source.
 - `third_party/monoblok/src/patchbay/*`: canonical monoblok patchbay core. Avoid Tinyblok-specific changes here; put Tinyblok adaptation in `main/c/tinyblok_patchbay.c`.
 
 ## Important Rules
@@ -50,7 +50,7 @@ device such as `PORT=/dev/cu.usbmodem101`.
 - Never commit real secrets. `sdkconfig` and `secrets/*` are gitignored; `secrets/nats.creds.example` is the placeholder.
 - New tinyblok compile-time settings belong in `main/Kconfig.projbuild`, not ad hoc C defines.
 - Registered `(fn ...)` declarations use `:type` for return type and optional `:input` for arity/input. Omit `:input` for zero-arg scalar reads; use `:input bytes :type bytes` for request payload transforms; scalar `:input` functions are threaded ops.
-- New compiled symbols named from `patchbay.edn` must be added to `tinyblok_patchbay.c`'s native symbol table.
+- New compiled symbols named from the patchbay source should be exposed through `tinyblok_app_native_symbols()` from `tinyblok_patchbay.h`; avoid editing `tinyblok_patchbay.c` for app-owned symbols.
 - Keep ESP-IDF-heavy code out of `third_party/monoblok/src/patchbay/`; the patchbay core should stay host-portable.
 
 ## Memory Model
@@ -92,4 +92,5 @@ make build
 ```
 
 `make test` builds a host C patchbay validator and checks `patchbay.edn`.
+Use `PATCHBAY_FILE=...` for alternate EDN/JSON/YAML sources.
 Firmware behavior still needs `make flash-monitor` on hardware.
