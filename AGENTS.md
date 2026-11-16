@@ -13,6 +13,11 @@ Keep `main/` as the ESP-IDF component root:
 - `third_party/monoblok/` is a git submodule and is the canonical patchbay source. Run `git submodule update --init --recursive` after cloning.
 - `main/CMakeLists.txt` registers C sources and embeds the selected patchbay source into a generated header.
 
+The README section _What's there and not there_ names the pinned monoblok
+commit and lists which forms work, which behave differently, and which are
+server-only. Update that section whenever the pin moves. For devices that run Linux (any Raspberry Pi), point users at
+monoblok's own ARM binaries instead of extending Tinyblok.
+
 ## Common Commands
 
 Use the top-level `Makefile`. Run it from a shell where ESP-IDF is already

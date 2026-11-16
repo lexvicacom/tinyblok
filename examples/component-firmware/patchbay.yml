@@ -16,16 +16,16 @@ fn:
 
 on:
   - sub: board.temp
-    thread:
-      - payload-float
+    pipeline:
+      - $payload-float
       - [round, 1]
-      - [publish!, [subject-append, rounded]]
+      - [publish!, [subject-append, "rounded"]]
 
   - sub: board.counter
-    thread:
-      - payload-float
-      - [throttle, :ms, 10000, 1]
-      - [publish!, [subject-append, every10s]]
+    pipeline:
+      - $payload-float
+      - [throttle, ms, 10000, 1]
+      - [publish!, [subject-append, "every10s"]]
 
 # Request handlers subscribe to their subject on the NATS broker. Enable this
 # only when the configured account may subscribe to `board.req.echo`; otherwise
@@ -33,4 +33,5 @@ on:
 #
 # on-req:
 #   - sub: board.req.echo
-#     body: [reply!, [board-echo, payload]]
+#     do:
+#       - [reply!, [board-echo, $payload]]

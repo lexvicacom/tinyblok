@@ -12,11 +12,12 @@ fn:
 
 on-req:
   - sub: board.req.echo
-    body: [reply!, [board-echo, payload]]
+    do:
+      - [reply!, [board-echo, $payload]]
 
 on:
   - sub: tinyblok.temp
-    thread:
-      - payload-float
+    pipeline:
+      - $payload-float
       - [round, 1]
-      - [publish!, [subject-append, yaml]]
+      - [publish!, [subject-append, "yaml"]]

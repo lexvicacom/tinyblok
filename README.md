@@ -6,6 +6,10 @@ Runs a message conditioning  _patchbay_ (see below animation) on ESP32 boards, a
 
 ![Tinyblok deadband patchbay example](./docs/tinyblok-deadband-gif-final.gif)
 
+**Using a Raspberry Pi?** Run monoblok itself instead of tinyblok. It now ships
+binaries for every Pi, including the Pi Zero W, and gives you the full patchbay.
+See [tinyblok or monoblok](#tinyblok-or-monoblok).
+
 ## Install
 
 The fastest path is browser-based flashing: open <a href="https://flash.monoblok.host" target="_blank" rel="noopener">flash.monoblok.host</a> in Chrome or Edge, plug the board in over USB, and pick a port.
@@ -92,22 +96,138 @@ For a full serial reset while developing:
 make erase-flash-monitor
 ```
 
+## Tinyblok or monoblok
+
+Tinyblok and monoblok share a rule engine but are different things. monoblok is
+a NATS-compatible server that conditions messages for its clients. Tinyblok is
+a NATS client that conditions its own sensor readings before sending them.
+
+Pick by the hardware you have:
+
+| Hardware | Use | Why |
+| --- | --- | --- |
+| ESP32-C6 or another microcontroller | tinyblok | No OS, no filesystem, a few hundred KB of RAM |
+| Raspberry Pi 3, 4, 5, Zero 2 W on a 64-bit OS | monoblok `linux-aarch64` binary or container image | Full server and full patchbay |
+| Raspberry Pi 1, Zero, Zero W, or any Pi on a 32-bit OS | monoblok `linux-armv6-gnueabihf` binary | Full server and full patchbay |
+
+### monoblok on a Raspberry Pi
+
+If the device runs Linux, tinyblok's limits buy you nothing. Install monoblok
+with its release helper, which picks the right binary for the board and OS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lexvicacom/monoblok/main/scripts/start.sh | bash
+./monoblok-*/monoblok --port 14222 --patchbay ./monoblok-*/patchbay.edn
+```
+
+- A 64-bit OS gets `linux-aarch64`. A 32-bit OS gets `linux-armv6-gnueabihf`,
+  which also covers 32-bit userspace on a 64-bit kernel.
+- The 32-bit binary needs ARMv6 hard-float Linux with glibc 2.36 or newer, so
+  Raspberry Pi OS Bookworm or newer.
+- Both need the OpenSSL 3 runtime (`sudo apt-get install libssl3` on Bookworm,
+  `libssl3t64` on Trixie).
+- Archives are also on the
+  [releases page](https://github.com/lexvicacom/monoblok/releases/latest) if you
+  would prefer not to pipe a script into `bash`.
+
+A sensor script on the Pi then publishes raw readings to monoblok on localhost,
+and monoblok does the conditioning. The
+[install and run guide](https://lexvicacom.github.io/monoblok/docs/running.html)
+covers the systemd service, container image, and command line flags.
+
+Choose tinyblok when the device is a microcontroller: cheaper, lower power,
+instant boot, nothing to administer. Choose monoblok when the device can run
+Linux.
+
+### How tinyblok differs from monoblok
+
+| | monoblok | tinyblok |
+| --- | --- | --- |
+| Role | NATS-compatible server that clients connect to | NATS client that publishes outwards |
+| Runs on | Linux (x64, ARM64, ARMv6) and macOS | ESP32-C6 firmware on ESP-IDF |
+| Where rules live | A patchbay file passed with `--patchbay` | Embedded in the firmware image at build time, parsed once at boot |
+| Changing rules | Edit the file and restart | Rebuild and reflash |
+| Checking rules | `--validate`, and `--soundcheck` with sample rows on stdin | `make soundcheck` on the host before flashing (parse and lint only) |
+| Input | Client publishes, plus `import` from NATS or JetStream | `(pump ...)` sources: C functions read on a timer |
+| Output | Fan-out to subscribers, plus `export` to a NATS cluster | Publishes to one NATS server through a bounded TX ring |
+| Subscribers | Any NATS client, plus the HTTP/SSE adapter | None. There is no listener on the board |
+| Request/reply | `reply!` inside ordinary `(on ...)` rules | `(on-req ...)` handlers on fixed subjects |
+| Last-value cache, snapshots, `$STATS.*` | Yes | No. Rule state lives in RAM and starts fresh on each boot |
+| Patchbay formats | EDN, YAML, JSON | EDN by default. YAML and JSON are a build option |
+| Forms | The full [forms reference](https://lexvicacom.github.io/monoblok/docs/forms.html) | Patchbay Lite, described below |
+| Settings | Command line flags | Browser setup portal, stored in NVS |
+| TLS and auth | Serves TLS and checks token or user/pass for its clients | Connects out with TLS, user/pass, or `.creds` |
+
 ## Patchbay Lite
 
-Tinyblok is a firmware-sized patchbay for telemetry. It embeds a C patchbay
-parser/evaluator derived from monoblok, reads local sensor pumps, derives new
-subjects, answers fixed request/reply subjects, and publishes results to NATS.
+Tinyblok is a firmware-sized patchbay for telemetry. It embeds monoblok's C
+patchbay parser/evaluator, reads local sensor pumps, derives new subjects,
+answers fixed request/reply subjects, and publishes results to NATS.
 
-It is not trying to be a full monoblok runtime on an ESP32-C6. Runtime patch
-loading, dynamic graph edits, inbound bridges, JetStream replay/consumer
-workers, and fleet-management features are outside the current scope.
+It is not trying to be a full monoblok runtime on an ESP32-C6. See
+[how tinyblok differs from monoblok](#how-tinyblok-differs-from-monoblok) for
+the overall shape; this section covers the rule language.
 
 ### What's there and not there
 
-Tinyblok uses monoblok's C parser/evaluator for normal `(on ...)` rules, with a
-small Tinyblok layer for `(pump ...)`, `(fn ...)`, `(on-req ...)`, and `reply!`.
-Top-level `lvc`, `export`/deprecated `bridge`, and `import` forms are parsed by
-the vendored core but are not wired into firmware policy.
+The patchbay core comes from the pinned `third_party/monoblok` submodule,
+currently monoblok commit `eef868e` (just after v0.4.6). Forms that monoblok
+adds after that commit are not available until the pin moves.
+
+**Works today, same as monoblok.** Ordinary `(on ...)` rules, including
+`:reentrant`, and top-level `(every :ms N ...)` timer rules, with these forms:
+
+- Bound values: `subject`, `payload`, `payload-float`, `payload-int`,
+  `payload-bool`.
+- Control and logic: `do`, `if`, `when`, `and`, `or`, `not`, `->`, comparison,
+  arithmetic, `min`, `max`, `abs`, `sign`, `now`.
+- Conditioning: `round`, `quantize`, `clamp`, `deadband`, `squelch`,
+  `changed?`, `delta`, `hold-off`, `throttle`, `rate`, `rising-edge`,
+  `falling-edge`, `transition`, `hysteresis`, `ewma`.
+- Windows: `moving-avg`, `moving-sum`, `moving-min`, `moving-max`, `median`,
+  `percentile`, `stddev`, `variance`, by sample count or `:ms`.
+- Clocked emitters: `sample!`, `debounce!`, `aggregate!`, `bar!`,
+  `on-silence`, `dropout`.
+- Subjects and text: `subject-append`, `subject-token`, `subject-with`,
+  `str-concat`, `contains?`, `starts-with?`, `ends-with?`.
+- Effects: `publish!`, `publish-to!`, `count!`, `print!`, with `:dp N` for
+  fixed decimal places on `publish!` and `reply!`.
+- `json-get` and `json-demux!`, only when the firmware is built with
+  `CONFIG_TINYBLOK_PATCHBAY_JSON`. It is off by default to keep the image small.
+
+**Works, with a caveat.** The regex forms `matches?`, `re-capture` and
+`re-replace` (with `#"..."` literals) are compiled in. Each pattern is compiled
+once at boot, and a complex pattern can take up to 128 KB of heap for its
+matcher table, which is a large share of what an ESP32-C6 has. Keep patterns
+short and few, and watch `tinyblok.heap` after adding one.
+
+**Tinyblok only.** `(pump ...)`, `(fn ...)`, `(on-req ...)`, the `uptime-s` and
+`uptime-us` values, and `reply!` inside `on-req`. monoblok does not read
+sensors or call compiled C symbols, so these have no server equivalent.
+
+**Different on tinyblok.**
+
+| Feature | On tinyblok |
+| --- | --- |
+| `reply!` | Only useful inside `(on-req ...)`. In an ordinary `(on ...)` rule there is no reply subject, so it does nothing. It needs a value: write `(reply! payload)` to echo the request |
+| `(last SUBJECT)` | Not available. It reads the last-value cache, which tinyblok does not keep |
+| `(env "NAME")` in config forms | Not applicable. There is no process environment on the board |
+| YAML `pump`, `fn`, `on-req` keys | Tinyblok only. monoblok rejects them as unknown top-level keys |
+| `uptime-s`, `uptime-us` | EDN only. YAML has no spelling for values that are not monoblok bindings |
+
+**Server features, out of scope.** `(lvc ...)`, `(export ...)`, `(import ...)`
+and the deprecated `(bridge ...)` are accepted by the parser but the firmware
+does not act on them. There is also no NATS listener, no local subscribers, no
+HTTP/SSE adapter, no snapshots or `replaying?`, no `$LVC.*` or `$STATS.*`
+subjects, and no runtime rule loading. If you need any of these at the edge,
+[run monoblok on a Raspberry Pi](#monoblok-on-a-raspberry-pi) or point tinyblok
+at a monoblok server and do that work there.
+
+The monoblok [patchbay guide](https://lexvicacom.github.io/monoblok/docs/patchbay.html),
+cheatsheet, and [YAML schema](https://github.com/lexvicacom/monoblok/blob/main/docs/patchbay-yaml-schema.md)
+apply to tinyblok with the exceptions above. YAML patchbays use the current
+monoblok dialect: `pipeline:` or `do:` bodies, `$payload` for bound values, and
+quoted strings.
 
 When using a coding assistant to author or edit patchbay rules, include the
 monoblok patchbay agent guidance from
