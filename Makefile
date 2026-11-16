@@ -26,10 +26,13 @@ MONOBLOK_CORE_C_SRCS = \
 
 PATCHBAY_BASE_C_SRCS = \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_arena.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_config.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_eval.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_forms.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_json.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_program.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_regex.c \
+	$(MONOBLOK_PATCHBAY_DIR)/pb_regex_dfa.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_sexpr.c \
 	$(MONOBLOK_PATCHBAY_DIR)/pb_validate.c \
 	$(MONOBLOK_CORE_C_SRCS)

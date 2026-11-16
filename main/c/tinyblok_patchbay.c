@@ -58,7 +58,6 @@ typedef struct patchbay_runtime
     request_binding requests[MAX_REQUESTS];
     size_t request_count;
     mb_router router;
-    pb_slice reply_subject;
 } patchbay_runtime;
 
 extern uint32_t tinyblok_free_heap(void);
@@ -74,6 +73,11 @@ extern int tinyblok_nats_subject_is_valid(const unsigned char *subject, size_t s
 extern int tinyblok_nats_reply(const unsigned char *subject, size_t subject_len,
                                const unsigned char *payload, size_t payload_len);
 extern void tinyblok_clock_arm(uint64_t us_until);
+
+// Short spellings for the monoblok evaluator's result helpers.
+#define ok pb_eval_ok
+#define fail pb_eval_fail
+#define as_string pb_eval_as_string
 
 static const char *TAG = "patchbay";
 static patchbay_runtime s_pb;
@@ -264,7 +268,8 @@ static bool eval_publish_bytes(pb_slice subject, pb_slice payload)
     const mb_slice mb_payload = {.ptr = (const uint8_t *)payload.ptr, .len = payload.len};
 
     const bool published = mb_router_publish(&s_pb.router, mb_subject, mb_payload);
-    const bool ok = pb_program_eval_publish(&s_pb.program, &s_pb.router, mb_subject, mb_payload, now_ms, (int64_t)now_ms);
+    const bool ok = pb_program_eval_publish(&s_pb.program, &s_pb.router, mb_subject, mb_payload, now_ms, (int64_t)now_ms,
+                                            (pb_program_eval_options){0});
     tinyblok_patchbay_arm_next_clock();
     return published && ok;
 }
@@ -344,9 +349,18 @@ static bool load_request(pb_values items)
     char *subject = arena_cstr(items.items[1].text);
     if (subject == NULL)
         return false;
+    // Resolve once at load: tags forms for dispatch, compiles regex literals, and
+    // rejects malformed bodies at boot instead of on the first request.
+    pb_value body = items.items[items.len - 1];
+    char err[128] = "";
+    if (!pb_resolve_rule(&s_pb.decl_arena, &body, true, true, err, sizeof(err)))
+    {
+        ESP_LOGE(TAG, "invalid on-req '%s': %s", subject, err);
+        return false;
+    }
     s_pb.requests[s_pb.request_count++] = (request_binding){
         .subject = {.ptr = subject, .len = items.items[1].text.len},
-        .body = items.items[items.len - 1],
+        .body = body,
     };
     return true;
 }
@@ -383,12 +397,14 @@ int tinyblok_patchbay_init(void)
     mb_router_init(&s_pb.router);
     s_pb.router.bridge_ctx = &s_pb;
     s_pb.router.bridge_fn = bridge_publish;
+    // Hooks go in before the load: rules are resolved at load time, and without
+    // the hooks a rule naming a `(fn ...)` or `uptime-s` is rejected as unknown.
+    pb_program_set_eval_hooks(&s_pb.program, tinyblok_eval_symbol, tinyblok_eval_call, &s_pb);
     if (!pb_program_load_source(&s_pb.program, TINYBLOK_PATCHBAY_SOURCE_LABEL,
                                 (const char *)tinyblok_patchbay_src, (size_t)tinyblok_patchbay_src_len))
         return -1;
     if (!load_declarations())
         return -1;
-    pb_program_set_eval_hooks(&s_pb.program, tinyblok_eval_symbol, tinyblok_eval_call, &s_pb);
     ESP_LOGI(TAG, "loaded %u rule(s), %u pump(s), %u request(s)",
              (unsigned)s_pb.program.len, (unsigned)s_pb.pump_count, (unsigned)s_pb.request_count);
     return 0;
@@ -466,30 +482,6 @@ static bool tinyblok_eval_symbol(void *user_ctx, pb_eval_ctx *ctx, pb_slice name
 static bool tinyblok_eval_call(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, pb_values args, pb_eval_result *out)
 {
     (void)user_ctx;
-    if (slice_eq(name, "reply!") || slice_eq(name, "reply"))
-    {
-        if (args.len > 1)
-        {
-            *out = fail(PB_EVAL_ARITY);
-            return true;
-        }
-        pb_value value = args.len == 0 ? (pb_value){.kind = PB_STRING, .text = ctx->payload} : args.items[0];
-        pb_slice payload = {0};
-        if (!coerce_payload(ctx, value, &payload))
-        {
-            *out = fail(PB_EVAL_TYPE);
-            return true;
-        }
-        if (tinyblok_nats_reply((const unsigned char *)s_pb.reply_subject.ptr, s_pb.reply_subject.len,
-                                (const unsigned char *)payload.ptr, payload.len) != 0)
-        {
-            *out = fail(PB_EVAL_PUBLISH_FAILED);
-            return true;
-        }
-        *out = ok((pb_value){.kind = PB_NIL});
-        return true;
-    }
-
     function_binding *binding = find_function(name);
     if (binding == NULL)
         return false;
@@ -532,6 +524,15 @@ static bool tinyblok_eval_call(void *user_ctx, pb_eval_ctx *ctx, pb_slice name, 
     return true;
 }
 
+// Publish hook for `on-req` bodies. The core `reply!` form publishes to the
+// request's reply subject through this, straight to the NATS socket.
+static bool request_publish(void *ctx, pb_slice subject, pb_slice payload)
+{
+    (void)ctx;
+    return tinyblok_nats_reply((const unsigned char *)subject.ptr, subject.len,
+                               (const unsigned char *)payload.ptr, payload.len) == 0;
+}
+
 void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_len,
                                   const unsigned char *reply, size_t reply_len,
                                   const unsigned char *payload, size_t payload_len)
@@ -544,12 +545,13 @@ void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_l
 
         pb_arena scratch = {0};
         pb_eval_state state = {0};
-        s_pb.reply_subject = (pb_slice){.ptr = (const char *)reply, .len = reply_len};
         pb_eval_ctx ctx = {
             .arena = &scratch,
             .state = &state,
             .subject = {.ptr = (const char *)subject, .len = subject_len},
             .payload = {.ptr = (const char *)payload, .len = payload_len},
+            .reply_to = {.ptr = (const char *)reply, .len = reply_len},
+            .publish = request_publish,
             .user_symbol = tinyblok_eval_symbol,
             .user_call = tinyblok_eval_call,
             .user_ctx = &s_pb,
@@ -557,7 +559,6 @@ void tinyblok_patchbay_handle_msg(const unsigned char *subject, size_t subject_l
         const pb_eval_result r = pb_eval(&ctx, req->body);
         if (r.err != PB_EVAL_OK)
             ESP_LOGW(TAG, "request eval failed: %s", pb_eval_error_name(r.err));
-        s_pb.reply_subject = (pb_slice){0};
         pb_eval_state_free(&state);
         pb_arena_free(&scratch);
         return;
